@@ -17,14 +17,21 @@ jobs:
           flutter create --platforms=android --project-name waad --org com.waad app
           cp pubspec.yaml app/pubspec.yaml
           cp main.dart app/lib/main.dart
+          cp icon.png app/icon.png
+          cp icon_fg.png app/icon_fg.png
           sed -i '0,/<application/s//<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' app/android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:label="[^"]*"/android:label="وعد"/' app/android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="مجاهد"/' app/android/app/src/main/AndroidManifest.xml
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
+      - name: App icon
+        working-directory: app
+        continue-on-error: true
+        run: dart run flutter_launcher_icons
       - name: Build
         working-directory: app
-        run: |
-          flutter pub get
-          flutter build apk --release
+        run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
-          name: waad-apk
+          name: mujahid-apk
           path: app/build/app/outputs/flutter-apk/app-release.apk
