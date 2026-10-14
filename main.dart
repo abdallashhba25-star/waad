@@ -272,11 +272,11 @@ Future<void> reschedulePrayerReminders() async {
         final when = tz.TZDateTime.from(times[i].add(const Duration(minutes: 15)), tz.local);
         if (when.isAfter(now)) {
           await notif.zonedSchedule(
-            id++,
-            'ورد ${prayers[i]} 📖',
-            kPrayerBody,
-            when,
-            details,
+            id: id++,
+            title: 'ورد ${prayers[i]} 📖',
+            body: kPrayerBody,
+            scheduledDate: when,
+            notificationDetails: details,
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           );
         }
@@ -292,8 +292,10 @@ Future<void> initNotifications() async {
       final info = await FlutterTimezone.getLocalTimezone();
       tz.setLocalLocation(tz.getLocation(info.identifier));
     } catch (_) {}
-    await notif.initialize(const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher')));
+    await notif.initialize(
+        settings: const InitializationSettings(
+            android: AndroidInitializationSettings('@mipmap/ic_launcher')),
+      );
     await notif
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
