@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Random;
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:qcf_quran/qcf_quran.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -199,16 +200,20 @@ class WaadApp extends StatelessWidget {
   const WaadApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: store,
-      builder: (c, _) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'مجاهد',
-        themeMode: store.dark ? ThemeMode.dark : ThemeMode.light,
-        theme: mk(Brightness.light),
-        darkTheme: mk(Brightness.dark),
-        builder: (c, w) => Directionality(textDirection: TextDirection.rtl, child: w!),
-        home: const Splash(),
+    return ScreenUtilInit(
+      designSize: const Size(392.72727272727275, 800.7272727272727),
+      minTextAdapt: true,
+      builder: (context, child) => ListenableBuilder(
+        listenable: store,
+        builder: (c, _) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'مجاهد',
+          themeMode: store.dark ? ThemeMode.dark : ThemeMode.light,
+          theme: mk(Brightness.light),
+          darkTheme: mk(Brightness.dark),
+          builder: (c, w) => Directionality(textDirection: TextDirection.rtl, child: w!),
+          home: const Splash(),
+        ),
       ),
     );
   }
@@ -646,7 +651,8 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
-  int i = 0, sec = 0;
+  late int cur = widget.pages.first;
+  int sec = 0, rk = 0;
   bool active = true;
   Timer? timer;
 
@@ -654,12 +660,14 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    store.last = widget.pages[0];
+    store.last = cur;
     store.save();
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!active || !mounted) return;
       sec++;
-      if (sec == kSecs) store.countPage(widget.pages[i], widget.ctx);
+      if (sec == kSecs) {
+        store.countPage(cur, widget.pages.contains(cur) ? widget.ctx : null);
+      }
     });
   }
 
@@ -676,13 +684,14 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   void go(int d) {
-    final n = i + d;
-    if (n < 0 || n >= widget.pages.length) return;
+    final n = (cur + d).clamp(widget.pages.first, widget.pages.last).toInt();
+    if (n == cur) return;
     setState(() {
-      i = n;
+      cur = n;
       sec = 0;
+      rk++;
     });
-    store.last = widget.pages[n];
+    store.last = n;
     store.save();
   }
 
@@ -692,62 +701,36 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Widget page(BuildContext context) {
-    final p = widget.pages[i];
-    const pw = 392.7272, ph = 800.7272; // التصميم المرجعي لخط المصحف
-    final paper = store.dark ? const Color(0xFF14201A) : Colors.white;
     final theme = store.dark
-        ? QcfThemeData(verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: paper)
-        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: paper);
+        ? QcfThemeData(
+            verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: const Color(0xFF14201A))
+        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: Colors.white);
     return Scaffold(
       appBar: AppBar(
-        title: Text('صفحة ${ar('$p')}'),
+        title: Text('صفحة ${ar('$cur')}'),
         actions: [
-          IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => store.setZoom(-0.15)),
-          IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => store.setZoom(0.15)),
+          IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => store.setZoom(-0.1)),
+          IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => store.setZoom(0.1)),
         ],
       ),
       body: Column(children: [
         Expanded(
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: paper,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: gold, width: 2),
-            ),
-            child: LayoutBuilder(builder: (c, cons) {
-              final scale = cons.maxWidth / pw * store.zoom;
-              return SingleChildScrollView(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: cons.maxWidth),
-                    child: Center(
-                      child: SizedBox(
-                        width: pw * scale,
-                        height: ph * scale,
-                        child: FittedBox(
-                          fit: BoxFit.fill,
-                          child: SizedBox(
-                            width: pw,
-                            height: ph,
-                            child: MediaQuery(
-                              data: MediaQuery.of(c).copyWith(size: const Size(pw, ph)),
-                              child: QcfPage(key: ValueKey(p), pageNumber: p, theme: theme),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
+          child: PageviewQuran(
+            key: ValueKey(rk),
+            initialPageNumber: cur,
+            sp: (1 / store.zoom).sp,
+            h: 1.h,
+            theme: theme,
+            onPageChanged: (p) {
+              cur = p;
+              sec = 0;
+              store.last = p;
+              store.save();
+            },
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
           child: Row(children: [
             Expanded(child: FilledButton(onPressed: () => go(1), child: const Text('التالية'))),
             const SizedBox(width: 10),
