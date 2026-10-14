@@ -23,8 +23,17 @@ jobs:
           sed -i '0,/<application/s//<uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"\/>\n    <uses-permission android:name="android.permission.VIBRATE"\/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"\/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"\/>\n    <application/' app/android/app/src/main/AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="مجاهد"/' app/android/app/src/main/AndroidManifest.xml
           sed -i 's#</application>#    <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />\n    <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n        <intent-filter>\n            <action android:name="android.intent.action.BOOT_COMPLETED"/>\n            <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>\n            <action android:name="android.intent.action.QUICKBOOT_POWERON" />\n            <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>\n        </intent-filter>\n    </receiver>\n</application>#' app/android/app/src/main/AndroidManifest.xml
-          sed -i -E 's/isCoreLibraryDesugaringEnabled[[:space:]]*=[[:space:]]*false/isCoreLibraryDesugaringEnabled = true/; s/coreLibraryDesugaringEnabled[[:space:]]+false/coreLibraryDesugaringEnabled true/' app/android/app/build.gradle.kts
-          sed -i -E 's/coreLibraryDesugaring\("[^"]*"\)/coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")/' app/android/app/build.gradle.kts
+          # core library desugaring — إلزامي لـ flutter_local_notifications (مش موجود في قالب Flutter)
+          GRADLE_FILE=app/android/app/build.gradle.kts
+          if [ ! -f "$GRADLE_FILE" ]; then GRADLE_FILE=app/android/app/build.gradle; fi
+          case "$GRADLE_FILE" in
+            *.kts)
+              printf '\nandroid {\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n    }\n}\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")\n}\n' >> "$GRADLE_FILE"
+              ;;
+            *)
+              printf '\nandroid {\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n    }\n}\n\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"\n}\n' >> "$GRADLE_FILE"
+              ;;
+          esac
       - name: Get packages
         working-directory: app
         run: flutter pub get
