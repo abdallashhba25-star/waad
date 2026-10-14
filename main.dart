@@ -61,8 +61,6 @@ int today() {
 
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
-  String mode = 'm';
-  int? start;
   int bal = 0, last = 1;
   double fs = 26;
   bool dark = false, intro = false;
@@ -71,17 +69,12 @@ class Store extends ChangeNotifier {
   Set<int> days = {};
   Map<String, int> own = {};
 
-  int get per => mode == 'm' ? 4 : 2;
-  int get total => mode == 'm' ? 30 : 60;
-
   Future<void> load() async {
     sp = await SharedPreferences.getInstance();
     final s = sp.getString('waad');
     if (s == null) return;
     try {
       final j = jsonDecode(s);
-      mode = j['mode'] ?? 'm';
-      start = j['start'];
       bal = j['bal'] ?? 0;
       last = j['last'] ?? 1;
       fs = (j['fs'] ?? 26).toDouble();
@@ -98,7 +91,7 @@ class Store extends ChangeNotifier {
     sp.setString(
         'waad',
         jsonEncode({
-          'mode': mode, 'start': start, 'bal': bal, 'last': last, 'fs': fs,
+          'bal': bal, 'last': last, 'fs': fs,
           'dark': dark, 'intro': intro, 'pg': pg, 'counted': counted.toList(),
           'days': days.toList(), 'own': own,
         }));
@@ -115,15 +108,19 @@ class Store extends ChangeNotifier {
     return n;
   }
 
-  List<int> plan(int d, int i) {
-    final p = per, D = total;
-    if (d < D) {
+  List<int> plan(int d, int i, int D) {
+    if (D < 30) {
+      final slot = (d - 1) * 5 + i, S = D * 5;
+      return [slot * kPages ~/ S + 1, (slot + 1) * kPages ~/ S];
+    }
+    const p = 4;
+    if (d < 30) {
       final s = (d - 1) * 5 * p + i * p + 1;
       return [s, s + p - 1];
     }
-    final rest = kPages - (D - 1) * 5 * p;
+    final rest = kPages - 29 * 5 * p;
     final b = rest ~/ 5, r = rest % 5;
-    var s = (D - 1) * 5 * p + 1;
+    var s = 29 * 5 * p + 1;
     for (var k = 0; k < i; k++) {
       s += b + (k < r ? 1 : 0);
     }
@@ -334,64 +331,31 @@ class _ShellState extends State<Shell> {
   }
 
   Widget khatma() {
-    if (store.start == null) {
-      return ListView(padding: const EdgeInsets.all(16), children: [
-        card(Column(children: [
-          const Text('اختر ختمتك', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          FilledButton(
-              onPressed: () {
-                store.mode = 'm';
-                store.start = today();
-                store.save();
-              },
-              child: const Text('ختمة شهرية (4 صفحات بعد كل صلاة)')),
-          const SizedBox(height: 8),
-          FilledButton(
-              onPressed: () {
-                store.mode = 't';
-                store.start = today();
-                store.save();
-              },
-              child: const Text('ختمة شهرين (صفحتان بعد كل صلاة)')),
-        ])),
-      ]);
-    }
-    final d = today() - store.start! + 1, D = store.total;
+    final n = DateTime.now();
+    final md = DateTime(n.year, n.month + 1, 0).day;
+    final D = md < 30 ? md : 30;
+    final d = n.day;
     if (d > D) {
       return ListView(padding: const EdgeInsets.all(16), children: [
-        card(Column(children: [
-          const Text('انتهت مدة الختمة، تقبّل الله منك 🤍'),
-          FilledButton(
-              onPressed: () {
-                store.start = null;
-                store.save();
-              },
-              child: const Text('ختمة جديدة')),
-        ])),
+        card(const Center(
+            child: Text('اليوم راحة ومراجعة، لا صفحات جديدة 🤍\nتبدأ ختمة الشهر الجديد في أول يوم',
+                textAlign: TextAlign.center))),
       ]);
     }
     return ListView(padding: const EdgeInsets.all(16), children: [
       card(Column(children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('اليوم ${ar('$d')} من ${ar('$D')}',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          TextButton(
-              onPressed: () {
-                store.start = null;
-                store.save();
-              },
-              child: const Text('إعادة')),
-        ]),
-        LinearProgressIndicator(value: (d - 1) / D),
+        Text('ختمة اليوم ${ar('$d')} من ${ar('$D')}  (${ar('${n.day}/${n.month}')})',
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(value: d / D),
       ])),
-      for (var i = 0; i < 5; i++) prayerRow(d, i),
+      for (var i = 0; i < 5; i++) prayerRow(n, d, D, i),
     ]);
   }
 
-  Widget prayerRow(int d, int i) {
-    final r = store.plan(d, i);
-    final key = '${store.mode}$d-$i';
+  Widget prayerRow(DateTime n, int d, int D, int i) {
+    final r = store.plan(d, i, D);
+    final key = '${n.year}-${n.month}-$d-$i';
     final done = (store.pg[key] ?? []).length >= r[1] - r[0] + 1;
     return Card(
       child: ListTile(
@@ -484,13 +448,7 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!active || !mounted) return;
       setState(() => sec++);
-      if (sec == 30) {
-        final got = store.countPage(widget.pages[i], widget.ctx);
-        if (got) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('+${fmt(kPer)} حسنة'), duration: const Duration(seconds: 2)));
-        }
-      }
+      if (sec == 20) store.countPage(widget.pages[i], widget.ctx);
     });
     load();
   }
@@ -547,7 +505,6 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       body: ListenableBuilder(
         listenable: store,
         builder: (c, _) => Column(children: [
-          LinearProgressIndicator(value: (sec / 30).clamp(0, 1).toDouble()),
           Expanded(
               child: SingleChildScrollView(
             padding: const EdgeInsets.all(18),
