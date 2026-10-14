@@ -1,20 +1,40 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show Random;
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 const kPages = 604;
 const kPer = 2500;
+const kSecs = 20;
+const kBonus = 10000;
+const gold = Color(0xFFE0B34F);
+const goldDark = Color(0xFFB8892B);
 const prayers = ['الفجر', 'الظهر', 'العصر', 'المغرب', 'العشاء'];
 const phrases = [
   'الجنة تنتظرك',
   'الآخرة خير وأبقى',
-  'صفحة اليوم تقرّبك من وعد الله',
+  'القرآن يأتي شافعًا لصاحبه',
   'خيركم من تعلّم القرآن وعلّمه',
-  'اجعل القرآن أنيس يومك',
-  'كل صفحة تقرؤها خطوة نحو جنتك',
-  'ابدأ بصفحة واحدة الآن',
+  'اقرأ وارتقِ',
+  'مع كل صفحة، تقترب من الجنة',
+  'اجعل للقرآن نصيبًا من يومك',
+  'من قرأ حرفًا فله به حسنة',
+  'وردك اليومي… عهدٌ بينك وبين ربك',
+  'لا تحقرنّ صفحة واحدة',
+  'الذي لا شيء في صدره من القرآن كالبيت الخرب',
+  'ربِّ اجعل القرآن ربيع قلبي',
+  'تدبّر آية خير من قراءة بلا وعي',
+  'القرآن دليلك إلى الجنة',
+  'هذا وعدك مع نفسك… أوفِ به',
+  'كم بقي بينك وبين ختمة؟ ابدأ الآن',
+  'ارفع درجتك… اقرأ صفحة',
+  'الطريق إلى الجنة يبدأ ببسملة',
+  'اجعل القرآن أول ما تفتتح به يومك',
+  'ثباتك اليوم… فرحُك غدًا',
+  'وعدٌ لن يُخلف: اقرأ ترتقِ',
 ];
 const bases = [
   'https://api.quran.com/api/v4',
@@ -31,10 +51,23 @@ class Item {
 const items = [
   Item('n', '🌴', 'نخلة', 100000),
   Item('r', '🌊', 'نهر', 250000),
+  Item('g', '🍇', 'بستان أعناب', 5000000),
+  Item('s', '⛲', 'عين سلسبيل', 20000000),
+  Item('a', '🛋', 'سرر وأرائك', 50000000),
   Item('h', '🏠', 'بيت في الجنة', 100000000),
+  Item('t', '⛺', 'خيمة من لؤلؤة', 300000000),
   Item('u', '🌸', 'حور عين', 400000000),
+  Item('d', '👘', 'ثياب من سندس وإستبرق', 800000000),
   Item('c', '🏰', 'قصر', 100000000000),
 ];
+
+String ar(String s) {
+  const d = '٠١٢٣٤٥٦٧٨٩';
+  return s.split('').map((c) {
+    final v = int.tryParse(c);
+    return v == null ? c : d[v];
+  }).join();
+}
 
 String fmt(int n) {
   final s = n.toString();
@@ -46,14 +79,6 @@ String fmt(int n) {
   return ar(b.toString());
 }
 
-String ar(String s) {
-  const d = '٠١٢٣٤٥٦٧٨٩';
-  return s.split('').map((c) {
-    final v = int.tryParse(c);
-    return v == null ? c : d[v];
-  }).join();
-}
-
 int today() {
   final n = DateTime.now();
   return DateTime.utc(n.year, n.month, n.day).difference(DateTime.utc(1970)).inDays;
@@ -62,11 +87,11 @@ int today() {
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
   int bal = 0, last = 1;
-  double fs = 26;
+  double fs = 28;
   bool dark = false, intro = false;
   Map<String, List<int>> pg = {};
   Set<String> counted = {};
-  Set<int> days = {};
+  Set<int> days = {}, bonus = {};
   Map<String, int> own = {};
 
   Future<void> load() async {
@@ -77,12 +102,13 @@ class Store extends ChangeNotifier {
       final j = jsonDecode(s);
       bal = j['bal'] ?? 0;
       last = j['last'] ?? 1;
-      fs = (j['fs'] ?? 26).toDouble();
+      fs = (j['fs'] ?? 28).toDouble();
       dark = j['dark'] ?? false;
       intro = j['intro'] ?? false;
       pg = (j['pg'] as Map? ?? {}).map((k, v) => MapEntry(k as String, List<int>.from(v)));
       counted = Set<String>.from(j['counted'] ?? []);
       days = Set<int>.from(j['days'] ?? []);
+      bonus = Set<int>.from(j['bonus'] ?? []);
       own = (j['own'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as int));
     } catch (_) {}
   }
@@ -91,9 +117,9 @@ class Store extends ChangeNotifier {
     sp.setString(
         'waad',
         jsonEncode({
-          'bal': bal, 'last': last, 'fs': fs,
-          'dark': dark, 'intro': intro, 'pg': pg, 'counted': counted.toList(),
-          'days': days.toList(), 'own': own,
+          'bal': bal, 'last': last, 'fs': fs, 'dark': dark, 'intro': intro,
+          'pg': pg, 'counted': counted.toList(), 'days': days.toList(),
+          'bonus': bonus.toList(), 'own': own,
         }));
     notifyListeners();
   }
@@ -129,23 +155,25 @@ class Store extends ChangeNotifier {
 
   int todayCount() => counted.where((k) => k.startsWith('${today()}:')).length;
 
-  bool countPage(int page, String? ctx) {
+  void countPage(int page, String? ctx) {
     final t = today();
     counted.removeWhere((k) => !k.startsWith('$t:'));
-    var got = false;
     final k = '$t:$page';
     if (!counted.contains(k)) {
       counted.add(k);
       bal += kPer;
       days.add(t);
-      got = true;
+      final s = streak();
+      if (s > 0 && s % 7 == 0 && !bonus.contains(t)) {
+        bonus.add(t);
+        bal += kBonus;
+      }
     }
     if (ctx != null) {
       final l = pg.putIfAbsent(ctx, () => []);
       if (!l.contains(page)) l.add(page);
     }
     save();
-    return got;
   }
 
   void buy(Item x) {
@@ -157,7 +185,7 @@ class Store extends ChangeNotifier {
   }
 
   void setFs(double d) {
-    fs = (fs + d).clamp(16, 44).toDouble();
+    fs = (fs + d).clamp(18, 48).toDouble();
     save();
   }
 
@@ -193,29 +221,136 @@ void main() async {
   runApp(const WaadApp());
 }
 
+ThemeData mk(Brightness b) {
+  final base = ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF1F6B4F), brightness: b);
+  return base.copyWith(textTheme: GoogleFonts.cairoTextTheme(base.textTheme));
+}
+
 class WaadApp extends StatelessWidget {
   const WaadApp({super.key});
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF1F6B4F);
     return ListenableBuilder(
       listenable: store,
       builder: (c, _) => MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'وعد',
         themeMode: store.dark ? ThemeMode.dark : ThemeMode.light,
-        theme: ThemeData(useMaterial3: true, colorSchemeSeed: seed),
-        darkTheme: ThemeData(useMaterial3: true, colorSchemeSeed: seed, brightness: Brightness.dark),
+        theme: mk(Brightness.light),
+        darkTheme: mk(Brightness.dark),
         builder: (c, w) => Directionality(textDirection: TextDirection.rtl, child: w!),
-        home: const Shell(),
+        home: const Splash(),
       ),
     );
   }
 }
 
-Widget card(Widget child) => Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      child: Padding(padding: const EdgeInsets.all(14), child: child),
+class Splash extends StatefulWidget {
+  const Splash({super.key});
+  @override
+  State<Splash> createState() => _SplashState();
+}
+
+class _SplashState extends State<Splash> with SingleTickerProviderStateMixin {
+  late final AnimationController c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..forward();
+  final phrase = phrases[Random().nextInt(phrases.length)];
+
+  @override
+  void initState() {
+    super.initState();
+    Timer(const Duration(milliseconds: 2800), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 600),
+        pageBuilder: (_, __, ___) => const Shell(),
+        transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+      ));
+    });
+  }
+
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+            gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF0B2F23), Color(0xFF1F6B4F)])),
+        child: Center(
+          child: FadeTransition(
+            opacity: c,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('وعد',
+                  style: GoogleFonts.cairo(fontSize: 76, fontWeight: FontWeight.bold, color: gold)),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(phrase,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(fontSize: 22, color: Colors.white, height: 1.8)),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class StarPattern extends CustomPainter {
+  final Color color;
+  StarPattern(this.color);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    const s = 64.0, r = 14.0;
+    for (double y = 0; y < size.height + s; y += s) {
+      for (double x = 0; x < size.width + s; x += s) {
+        for (var k = 0; k < 2; k++) {
+          canvas.save();
+          canvas.translate(x, y);
+          canvas.rotate(k * 0.785398);
+          canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: r * 2, height: r * 2), p);
+          canvas.restore();
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(StarPattern o) => o.color != color;
+}
+
+Widget card(Widget child) => Builder(builder: (c) {
+      final cs = Theme.of(c).colorScheme;
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: cs.surface.withOpacity(0.92),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: cs.outlineVariant),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: child,
+      );
+    });
+
+Widget balanceText(TextStyle st) => TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: store.bal.toDouble()),
+      duration: const Duration(milliseconds: 900),
+      builder: (c, v, _) => Text(fmt(v.round()), style: st),
     );
 
 class Shell extends StatefulWidget {
@@ -239,10 +374,15 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = [home(), mushaf(), khatma(), Jannah(open: () {})];
+    final cs = Theme.of(context).colorScheme;
+    final tabs = [home(), mushaf(), khatma(), const Jannah()];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('وعد', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Text('وعد',
+            style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 26, color: goldDark)),
         actions: [
           IconButton(icon: const Icon(Icons.text_decrease), onPressed: () => store.setFs(-2)),
           IconButton(icon: const Icon(Icons.text_increase), onPressed: () => store.setFs(2)),
@@ -254,46 +394,70 @@ class _ShellState extends State<Shell> {
               }),
         ],
       ),
-      body: ListenableBuilder(listenable: store, builder: (c, _) => tabs[tab]),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: tab,
-        type: BottomNavigationBarType.fixed,
-        onTap: (i) => setState(() => tab = i),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
-          BottomNavigationBarItem(icon: Icon(Icons.menu_book), label: 'المصحف'),
-          BottomNavigationBarItem(icon: Icon(Icons.mosque), label: 'الختمة'),
-          BottomNavigationBarItem(icon: Icon(Icons.park), label: 'جنتك'),
+      body: Stack(children: [
+        Positioned.fill(child: CustomPaint(painter: StarPattern(cs.primary.withOpacity(0.07)))),
+        ListenableBuilder(listenable: store, builder: (c, _) => tabs[tab]),
+      ]),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (i) => setState(() => tab = i),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'الرئيسية'),
+          NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: 'المصحف'),
+          NavigationDestination(icon: Icon(Icons.mosque_outlined), selectedIcon: Icon(Icons.mosque), label: 'الختمة'),
+          NavigationDestination(icon: Icon(Icons.park_outlined), selectedIcon: Icon(Icons.park), label: 'جنتك'),
         ],
       ),
     );
   }
 
   Widget home() {
-    final big = TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.amber.shade800);
     return ListView(padding: const EdgeInsets.all(16), children: [
       card(Center(
-          child: Text(phrases[today() % phrases.length],
-              style: big, textAlign: TextAlign.center))),
-      card(Row(children: [
-        Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('رصيد حسناتك'),
-          Text(fmt(store.bal), style: big),
-          const Text(note, style: TextStyle(fontSize: 11, color: Colors.grey)),
-        ])),
-        Column(children: [
-          const Text('🔥', style: TextStyle(fontSize: 28)),
-          Text(ar('${store.streak()}'), style: big),
-          const Text('يوم متتالي', style: TextStyle(fontSize: 11)),
+          child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(phrases[today() % phrases.length],
+            textAlign: TextAlign.center,
+            style: GoogleFonts.cairo(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark, height: 1.7)),
+      ))),
+      Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [goldDark, gold]),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [BoxShadow(color: goldDark.withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 6))],
+        ),
+        child: Row(children: [
+          Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('رصيد حسناتك', style: TextStyle(color: Colors.white70)),
+            balanceText(const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white)),
+            const SizedBox(height: 4),
+            const Text(note, style: TextStyle(fontSize: 11, color: Colors.white70)),
+          ])),
+          Column(children: [
+            const Text('🔥', style: TextStyle(fontSize: 30)),
+            Text(ar('${store.streak()}'),
+                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+            const Text('يوم متتالي', style: TextStyle(fontSize: 11, color: Colors.white70)),
+          ]),
         ]),
-      ])),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Text('🎁 هدية ${fmt(kBonus)} حسنة كل ٧ أيام متتالية',
+            style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ),
       card(Column(children: [
         Text('صفحات اليوم: ${ar('${store.todayCount()}')}'),
-        const SizedBox(height: 8),
-        FilledButton(
-            onPressed: () => openFrom(store.last),
-            child: Text('كمّل من حيث وقفت (ص ${ar('${store.last}')})')),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+              onPressed: () => openFrom(store.last),
+              child: Text('كمّل من حيث وقفت (ص ${ar('${store.last}')})')),
+        ),
       ])),
     ]);
   }
@@ -307,8 +471,7 @@ class _ShellState extends State<Shell> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'رقم الصفحة (1 - 604)'))),
         const SizedBox(width: 10),
-        FilledButton(
-            onPressed: () => openFrom(int.tryParse(gp.text) ?? 1), child: const Text('فتح')),
+        FilledButton(onPressed: () => openFrom(int.tryParse(gp.text) ?? 1), child: const Text('فتح')),
       ])),
       card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('الأجزاء'),
@@ -330,6 +493,11 @@ class _ShellState extends State<Shell> {
     ]);
   }
 
+  bool isDone(DateTime n, int d, int D, int i) {
+    final r = store.plan(d, i, D);
+    return (store.pg['${n.year}-${n.month}-$d-$i'] ?? []).length >= r[1] - r[0] + 1;
+  }
+
   Widget khatma() {
     final n = DateTime.now();
     final md = DateTime(n.year, n.month + 1, 0).day;
@@ -342,27 +510,48 @@ class _ShellState extends State<Shell> {
                 textAlign: TextAlign.center))),
       ]);
     }
+    final all = List.generate(5, (i) => isDone(n, d, D, i)).every((x) => x);
     return ListView(padding: const EdgeInsets.all(16), children: [
       card(Column(children: [
         Text('ختمة اليوم ${ar('$d')} من ${ar('$D')}  (${ar('${n.day}/${n.month}')})',
             style: const TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        LinearProgressIndicator(value: d / D),
+        const SizedBox(height: 10),
+        ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(value: d / D, minHeight: 8)),
       ])),
+      if (all)
+        card(const Center(
+            child: Text('ما شاء الله، أتممت ختمة اليوم 🤍',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: goldDark)))),
       for (var i = 0; i < 5; i++) prayerRow(n, d, D, i),
     ]);
   }
 
   Widget prayerRow(DateTime n, int d, int D, int i) {
+    final cs = Theme.of(context).colorScheme;
     final r = store.plan(d, i, D);
     final key = '${n.year}-${n.month}-$d-$i';
-    final done = (store.pg[key] ?? []).length >= r[1] - r[0] + 1;
-    return Card(
+    final done = isDone(n, d, D, i);
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      decoration: BoxDecoration(
+        color: done ? cs.primaryContainer : cs.surface.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: done ? cs.primary : cs.outlineVariant, width: done ? 1.6 : 1),
+      ),
       child: ListTile(
-        title: Text(prayers[i], style: const TextStyle(fontWeight: FontWeight.bold)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(prayers[i], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         subtitle: Text('ص ${ar('${r[0]}')} – ${ar('${r[1]}')}'),
-        trailing: Icon(done ? Icons.check_circle : Icons.chevron_left,
-            color: done ? Colors.green : null),
+        trailing: done
+            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('تمت', style: TextStyle(fontWeight: FontWeight.bold, color: cs.primary)),
+                const SizedBox(width: 6),
+                const Icon(Icons.check_circle, size: 36, color: Colors.green),
+              ])
+            : const Icon(Icons.chevron_left),
         onTap: () => open(List.generate(r[1] - r[0] + 1, (k) => r[0] + k), key),
       ),
     );
@@ -370,8 +559,7 @@ class _ShellState extends State<Shell> {
 }
 
 class Jannah extends StatefulWidget {
-  final VoidCallback open;
-  const Jannah({super.key, required this.open});
+  const Jannah({super.key});
   @override
   State<Jannah> createState() => _JannahState();
 }
@@ -392,17 +580,59 @@ class _JannahState extends State<Jannah> {
     }
   }
 
+  Widget scene() {
+    final h = DateTime.now().hour;
+    final night = h < 6 || h >= 18;
+    final total = store.own.values.fold(0, (a, b) => a + b);
+    final txt = items.map((x) => x.emoji * (store.own[x.id] ?? 0).clamp(0, 8)).join(' ').trim();
+    return Container(
+      height: 170,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: night
+              ? const [Color(0xFF0B1B3A), Color(0xFF24507A)]
+              : const [Color(0xFF8FD3F4), Color(0xFFD8F1D0)],
+        ),
+      ),
+      child: Stack(children: [
+        Positioned(top: 12, right: 16, child: Text(night ? '🌙' : '☀️', style: const TextStyle(fontSize: 34))),
+        if (night) ...const [
+          Positioned(top: 20, left: 40, child: Text('✨', style: TextStyle(fontSize: 14))),
+          Positioned(top: 50, left: 120, child: Text('✨', style: TextStyle(fontSize: 10))),
+          Positioned(top: 30, left: 220, child: Text('✨', style: TextStyle(fontSize: 12))),
+        ],
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(total),
+              tween: Tween<double>(begin: 0.5, end: 1),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.elasticOut,
+              builder: (c, v, _) => Transform.scale(
+                scale: v,
+                child: Text(txt.isEmpty ? 'جنتك تنتظر أول غرسة 🌱' : txt,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: txt.isEmpty ? 18 : 30, color: night ? Colors.white : Colors.black87)),
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scene = items.map((x) => x.emoji * (store.own[x.id] ?? 0).clamp(0, 10)).join(' ').trim();
-    final big = TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.amber.shade800);
     return ListView(padding: const EdgeInsets.all(16), children: [
-      card(Center(
-          child: Text(scene.isEmpty ? 'جنتك تنتظر أول غرسة 🌱' : scene,
-              style: const TextStyle(fontSize: 30), textAlign: TextAlign.center))),
+      scene(),
       card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('رصيد حسناتك'),
-        Text(fmt(store.bal), style: big),
+        balanceText(const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark)),
         const Text(note, style: TextStyle(fontSize: 11, color: Colors.grey)),
       ])),
       for (final x in items) itemCard(x),
@@ -417,8 +647,11 @@ class _JannahState extends State<Jannah> {
         Text('${x.emoji} ${x.name}', style: const TextStyle(fontWeight: FontWeight.bold)),
         Text('${fmt(x.price)} حسنة'),
       ]),
-      const SizedBox(height: 6),
-      LinearProgressIndicator(value: (store.bal / x.price).clamp(0, 1).toDouble()),
+      const SizedBox(height: 8),
+      ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: LinearProgressIndicator(value: (store.bal / x.price).clamp(0, 1).toDouble(), minHeight: 8)),
+      const SizedBox(height: 4),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(ok ? 'متاح' : 'فاضل لك ${fmt(need)} صفحة', style: const TextStyle(fontSize: 12)),
         FilledButton(onPressed: ok ? () => store.buy(x) : null, child: const Text('اقتناء')),
@@ -447,8 +680,8 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!active || !mounted) return;
-      setState(() => sec++);
-      if (sec == 20) store.countPage(widget.pages[i], widget.ctx);
+      sec++;
+      if (sec == kSecs) store.countPage(widget.pages[i], widget.ctx);
     });
     load();
   }
@@ -491,9 +724,24 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
     load();
   }
 
+  List<InlineSpan> spans(String t, double size) {
+    final re = RegExp(r'﴿([٠-٩]+)﴾');
+    final out = <InlineSpan>[];
+    var k = 0;
+    for (final m in re.allMatches(t)) {
+      if (m.start > k) out.add(TextSpan(text: t.substring(k, m.start)));
+      out.add(TextSpan(text: m.group(0), style: TextStyle(color: goldDark, fontSize: size * 0.8)));
+      k = m.end;
+    }
+    if (k < t.length) out.add(TextSpan(text: t.substring(k)));
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.pages[i];
+    final cs = Theme.of(context).colorScheme;
+    final paper = store.dark ? const Color(0xFF14201A) : const Color(0xFFFFFBF0);
     return Scaffold(
       appBar: AppBar(
         title: Text('صفحة ${ar('$p')}'),
@@ -506,29 +754,48 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
         listenable: store,
         builder: (c, _) => Column(children: [
           Expanded(
-              child: SingleChildScrollView(
-            padding: const EdgeInsets.all(18),
-            child: text != null
-                ? Text(text!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: store.fs, height: 2.1))
-                : err
-                    ? Column(children: [
-                        const SizedBox(height: 40),
-                        const Text('تعذّر تحميل الصفحة، تأكد من الإنترنت'),
-                        TextButton(onPressed: load, child: const Text('إعادة المحاولة')),
-                      ])
-                    : const Padding(
-                        padding: EdgeInsets.only(top: 60),
-                        child: Center(child: CircularProgressIndicator())),
-          )),
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+              decoration: BoxDecoration(
+                color: paper,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: gold, width: 2),
+              ),
+              child: Column(children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: text != null
+                        ? Text.rich(
+                            TextSpan(
+                              style: GoogleFonts.amiriQuran(
+                                  fontSize: store.fs, height: 2.2, color: cs.onSurface),
+                              children: spans(text!, store.fs),
+                            ),
+                            textAlign: TextAlign.justify,
+                            textDirection: TextDirection.rtl)
+                        : err
+                            ? Column(children: [
+                                const SizedBox(height: 40),
+                                const Text('تعذّر تحميل الصفحة، تأكد من الإنترنت'),
+                                TextButton(onPressed: load, child: const Text('إعادة المحاولة')),
+                              ])
+                            : const Padding(
+                                padding: EdgeInsets.only(top: 60),
+                                child: Center(child: CircularProgressIndicator())),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text('— ${ar('$p')} —', style: const TextStyle(color: goldDark, fontWeight: FontWeight.bold)),
+              ]),
+            ),
+          ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Row(children: [
               Expanded(child: FilledButton(onPressed: () => go(1), child: const Text('التالية'))),
               const SizedBox(width: 10),
-              Expanded(
-                  child: OutlinedButton(onPressed: () => go(-1), child: const Text('السابقة'))),
+              Expanded(child: OutlinedButton(onPressed: () => go(-1), child: const Text('السابقة'))),
             ]),
           ),
         ]),
