@@ -1,16 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Random;
+import 'package:adhan_dart/adhan_dart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:qcf_quran/qcf_quran.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 
 const kPages = 604;
 const kPer = 2500;
 const kSecs = 20;
 const gold = Color(0xFFE0B34F);
 const goldDark = Color(0xFFB8892B);
+const deepGreen = Color(0xFF0F3D2E);
 const prayers = ['الفجر', 'الظهر', 'العصر', 'المغرب', 'العشاء'];
 const phrases = [
   'الجنة تنتظرك',
@@ -34,10 +41,6 @@ const phrases = [
   'اجعل القرآن أول ما تفتتح به يومك',
   'ثباتك اليوم… فرحُك غدًا',
   'وعدٌ لن يُخلف: اقرأ ترتقِ',
-];
-const bases = [
-  'https://api.quran.com/api/v4',
-  'https://apis.quran.foundation/content/api/v4',
 ];
 const note = 'رصيد رمزي يشجعك، والجزاء الحقيقي بيد الله';
 
@@ -81,6 +84,25 @@ String fmt(int n) {
 int today() {
   final n = DateTime.now();
   return DateTime.utc(n.year, n.month, n.day).difference(DateTime.utc(1970)).inDays;
+}
+
+/// اليوم الهجري التقريبي (خوارزمية تقويمية، قد تختلف يومًا عن الرؤية)
+String hijriLabel(DateTime g) {
+  int jd = (g.difference(DateTime(1970, 1, 1)).inDays + 2440588);
+  int l = jd - 1948440 + 10632;
+  int n = (l - 1) ~/ 10631;
+  l = l - 10631 * n + 354;
+  int j = (10985 - l) ~/ 5316 * (50 * l ~/ 17719) + (l ~/ 5670) * (43 * l ~/ 15238);
+  l = l - (30 - j) ~/ 15 * (17719 * j ~/ 50) - (j ~/ 16) * (15238 * j ~/ 43) + 29;
+  int m = 24 * l ~/ 709;
+  int d = l - (709 * m ~/ 24);
+  int y = 30 * n + j - 30;
+  const months = [
+    'محرم', 'صفر', 'ربيع الأول', 'ربيع الآخر', 'جمادى الأولى', 'جمادى الآخرة',
+    'رجب', 'شعبان', 'رمضان', 'شوال', 'ذو القعدة', 'ذو الحجة'
+  ];
+  if (m < 1 || m > 12) return '';
+  return '${ar('$d')} ${months[m - 1]} ${ar('$y')}هـ';
 }
 
 class Store extends ChangeNotifier {
@@ -185,15 +207,369 @@ class Store extends ChangeNotifier {
 
 final store = Store();
 
+/* ═══════════════════════════ مواقيت الصلاة والإشعارات ═══════════════════════════ */
+
+final notif = FlutterLocalNotificationsPlugin();
+const kPrayerBody = 'حان وقت وردك… صفحات قليلة تقرّبك من الختمة 🤍';
+
+List<DateTime> prayerTimesFor(DateTime day, Coordinates coords) {
+  final pt = PrayerTimes(
+    coordinates: coords,
+    date: DateTime(day.year, day.month, day.day),
+    calculationParameters: CalculationMethodParameters.egyptian(),
+    precision: true,
+  );
+  return [pt.fajr, pt.dhuhr, pt.asr, pt.maghrib, pt.isha]
+      .map((t) => t.isUtc ? t.toLocal() : t)
+      .toList();
+}
+
+Future<Coordinates> resolveCoords() async {
+  try {
+    if (await Geolocator.isLocationServiceEnabled()) {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+      if (perm != LocationPermission.denied && perm != LocationPermission.deniedForever) {
+        final pos = await Geolocator.getCurrentPosition(
+            locationSettings:
+                const LocationSettings(accuracy: LocationAccuracy.low))
+            .timeout(const Duration(seconds: 12));
+        await store.sp.setString('coords', '${pos.latitude},${pos.longitude}');
+        return Coordinates(pos.latitude, pos.longitude);
+      }
+    }
+  } catch (_) {}
+  final s = store.sp.getString('coords');
+  if (s != null) {
+    final p = s.split(',');
+    if (p.length == 2) {
+      return Coordinates(double.tryParse(p[0]) ?? 30.0444, double.tryParse(p[1]) ?? 31.2357);
+    }
+  }
+  return const Coordinates(30.0444, 31.2357); // القاهرة كاحتياطي
+}
+
+Future<void> reschedulePrayerReminders() async {
+  try {
+    await notif.cancelAll();
+    final coords = await resolveCoords();
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'waad_reminders',
+        'تذكير ورد القرآن',
+        channelDescription: 'تذكير بوردك بعد كل صلاة',
+        importance: Importance.max,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+    );
+    final now = tz.TZDateTime.now(tz.local);
+    var id = 0;
+    for (var d = 0; d < 8; d++) {
+      final day = DateTime(now.year, now.month, now.day).add(Duration(days: d));
+      final times = prayerTimesFor(day, coords);
+      for (var i = 0; i < 5; i++) {
+        final when = tz.TZDateTime.from(times[i].add(const Duration(minutes: 15)), tz.local);
+        if (when.isAfter(now)) {
+          await notif.zonedSchedule(
+            id++,
+            'ورد ${prayers[i]} 📖',
+            kPrayerBody,
+            when,
+            details,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          );
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+Future<void> initNotifications() async {
+  try {
+    tz.initializeTimeZones();
+    try {
+      final info = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(info.identifier));
+    } catch (_) {}
+    await notif.initialize(const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher')));
+    await notif
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+  } catch (_) {}
+}
+
+/* ═══════════════════════════ المصحف: رسم احترافي سطر-بسطر ═══════════════════════════ */
+
+double mushafBaseFont(int page) {
+  if (page == 1 || page == 2) return 25;
+  if (page >= 550) return 22;
+  if (page == 145 || page == 585) return 22.7;
+  if (page == 566 || page == 565 || page == 532 || page == 533 || page == 523 || page == 577 || page == 535) return 22.5;
+  if (page == 116 || page == 156) return 23.4;
+  const s = {56, 57, 368, 269, 372, 376, 409, 435, 444, 460, 498, 499, 506, 513, 515, 517};
+  if (s.contains(page)) return 23.2;
+  return 24;
+}
+
+class MushafColors {
+  final Color bg, frame, frameSoft, text, accent, headerBg;
+  const MushafColors({
+    required this.bg, required this.frame, required this.frameSoft,
+    required this.text, required this.accent, required this.headerBg,
+  });
+  static const light = MushafColors(
+    bg: Color(0xFFF6EFDD),
+    frame: Color(0xFF9A7B2D),
+    frameSoft: Color(0x339A7B2D),
+    text: Color(0xFF231A08),
+    accent: Color(0xFF7A5C14),
+    headerBg: Color(0xFFEFE3C6),
+  );
+  static const dark = MushafColors(
+    bg: Color(0xFF121B16),
+    frame: Color(0xFF8A6D2F),
+    frameSoft: Color(0x338A6D2F),
+    text: Color(0xFFEDE3CB),
+    accent: Color(0xFFCFA750),
+    headerBg: Color(0xFF1C2820),
+  );
+}
+
+class _Line {
+  final InlineSpan span;
+  final bool flexible;
+  final int? surah;
+  _Line(this.span, {this.flexible = false, this.surah});
+}
+
+/// يبني أسطر الصفحة مطابقة لتقسيم مصحف المدينة (السطر ينتهي بنهاية آية)
+List<_Line> buildMushafLines(int page, MushafColors c, double fontSize, double lh) {
+  final pageFont = 'QCF_P${page.toString().padLeft(3, '0')}';
+  final ranges = getPageData(page);
+  final lines = <_Line>[];
+  for (var ri = 0; ri < ranges.length; ri++) {
+    final r = ranges[ri];
+    final surah = int.parse(r['surah'].toString());
+    final start = int.parse(r['start'].toString());
+    final end = int.parse(r['end'].toString());
+    var buf = <InlineSpan>[];
+    void flush({bool last = false}) {
+      if (buf.isEmpty) return;
+      lines.add(_Line(TextSpan(children: buf), flexible: !last && buf.isNotEmpty, surah: surah));
+      buf = [];
+    }
+    if (start == 1) {
+      lines.add(_Line(const TextSpan(text: ''), surah: surah));
+      // البسملة تُطبع عند بداية كل سورة عدا الفاتحة (هي الآية الأولى) والتوبة (لا بسملة فيها)
+      if (surah != 1 && surah != 9) {
+        buf.add(TextSpan(
+          text: ' ﱁ  ﱂﱃﱄ',
+          style: TextStyle(
+            fontFamily: 'QCF_P001',
+            package: 'qcf_quran',
+            fontSize: fontSize * 0.96,
+            height: lh,
+            color: c.text,
+          ),
+        ));
+        flush();
+      }
+    }
+    for (var v = start; v <= end; v++) {
+      var t = getVerseQCF(surah, v, verseEndSymbol: false);
+      if (ri == 0 && v == start && t.startsWith('\n')) t = t.replaceFirst('\n', '');
+      final parts = t.split('\n');
+      for (var pi = 0; pi < parts.length; pi++) {
+        final part = parts[pi];
+        if (part.isNotEmpty) {
+          buf.add(TextSpan(text: part));
+        }
+        final isLastPart = pi == parts.length - 1;
+        if (isLastPart) {
+          buf.add(TextSpan(text: getVerseNumberQCF(surah, v)));
+          flush(last: ri == ranges.length - 1 && v == end);
+        } else {
+          flush(last: false);
+        }
+      }
+      if (t.isEmpty) {
+        buf.add(TextSpan(text: getVerseNumberQCF(surah, v)));
+        flush(last: ri == ranges.length - 1 && v == end);
+      }
+    }
+  }
+  return lines.where((l) {
+    // أزل الأسطر الفارغة الناتجة عن محاذاة الحدود
+    return !(l.span is TextSpan &&
+        (l.span as TextSpan).children == null &&
+        ((l.span as TextSpan).text ?? '').isEmpty &&
+        l.surah == null);
+  }).toList();
+}
+
+class MushafPageView extends StatelessWidget {
+  final int page;
+  final bool dark;
+  final double zoom;
+  final void Function(int surah, int verse)? onVerseLongPress;
+  const MushafPageView({super.key, required this.page, required this.dark, required this.zoom, this.onVerseLongPress});
+
+  List<Widget> lineWidgets(double innerW, TextStyle style, List<_Line> lines, MushafColors c) {
+    return [
+      for (final l in lines)
+        if (l.surah != null &&
+            (l.span as TextSpan).text == '' &&
+            (l.span as TextSpan).children == null)
+          SurahHeader(number: l.surah!, colors: c)
+        else
+          SizedBox(
+            width: innerW,
+            child: Text.rich(
+              l.span,
+              textAlign: TextAlign.center,
+              textDirection: TextDirection.rtl,
+              locale: const Locale('ar'),
+              softWrap: false,
+              overflow: TextOverflow.visible,
+              maxLines: 1,
+              style: style,
+            ),
+          ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = dark ? MushafColors.dark : MushafColors.light;
+    final fs = mushafBaseFont(page) * zoom.clamp(0.6, 1.6);
+    final lh = (page == 1 || page == 2) ? 2.15 : 1.9;
+    final ranges = getPageData(page);
+    final firstSurah = int.parse(ranges.first['surah'].toString());
+    final surahName = getSurahNameArabic(firstSurah);
+    final juz = getJuzNumber(firstSurah, int.parse(ranges.first['start'].toString()));
+    final style = TextStyle(
+      fontFamily: 'QCF_P${page.toString().padLeft(3, '0')}',
+      package: 'qcf_quran',
+      fontSize: fs,
+      height: lh,
+      color: c.text,
+    );
+    return LayoutBuilder(builder: (ctx, box) {
+      final padH = 14.0, padTop = 10.0, padBottom = 8.0;
+      final topBar = 30.0;
+      final bottomBar = 26.0;
+      final innerW = box.maxWidth - 2 * (padH + 10);
+      var lines = buildMushafLines(page, c, fs, lh);
+      final textLines = lines.where((l) => l.span is! WidgetSpan).length;
+      final hasHeaderLines = lines.any((l) => l.surah != null && (l.span as TextSpan).text == '');
+      final estContent = textLines * fs * lh + (hasHeaderLines ? 46 : 0) * lines.where((l) => (l.span as TextSpan).text == '' && l.surah != null).length;
+      final avail = box.maxHeight - topBar - bottomBar - padTop - padBottom - 26;
+      final flex = textLines > 2 && estContent < avail * 0.98;
+      return Container(
+        color: c.bg,
+        padding: EdgeInsets.fromLTRB(padH, padTop, padH, padBottom),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: c.frame, width: 2.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Container(
+            margin: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              border: Border.all(color: c.frameSoft, width: 1),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(children: [
+              SizedBox(
+                height: topBar,
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('سورة $surahName',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: c.accent)),
+                  Text('الجزء ${ar('$juz')}',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: c.accent)),
+                ]),
+              ),
+              Divider(height: 1, thickness: 1, color: c.frameSoft),
+              const SizedBox(height: 6),
+              Expanded(
+                child: flex
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: lineWidgets(innerW, style, lines, c),
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: lineWidgets(innerW, style, lines, c),
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 6),
+              Divider(height: 1, thickness: 1, color: c.frameSoft),
+              SizedBox(
+                height: bottomBar,
+                child: Center(
+                  child: Text('﴿ ${ar('$page')} ﴾',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: c.accent)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class SurahHeader extends StatelessWidget {
+  final int number;
+  final MushafColors colors;
+  const SurahHeader({super.key, required this.number, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = getSurahNameArabic(number);
+    final place = getPlaceOfRevelation(number) == 'Makkah' ? 'مكية' : 'مدنية';
+    final count = ar('${getVerseCount(number)}');
+    return Container(
+      height: 44,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.headerBg,
+        border: Border.all(color: colors.frame, width: 1.4),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text('✦', style: TextStyle(color: colors.accent, fontSize: 13)),
+        const SizedBox(width: 10),
+        Text('سورة $name',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: colors.accent)),
+        const SizedBox(width: 10),
+        Text('✦', style: TextStyle(color: colors.accent, fontSize: 13)),
+        const SizedBox(width: 10),
+        Text('$place • $count آية',
+            style: TextStyle(fontSize: 10.5, color: colors.accent.withOpacity(0.85))),
+      ]),
+    );
+  }
+}
+
+/* ═══════════════════════════ التطبيق ═══════════════════════════ */
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await store.load();
+  await initNotifications();
+  unawaited(reschedulePrayerReminders());
   runApp(const WaadApp());
 }
 
 ThemeData mk(Brightness b) {
-  final base = ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF1F6B4F), brightness: b);
-  return base;
+  return ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF1F6B4F), brightness: b);
 }
 
 class WaadApp extends StatelessWidget {
@@ -262,14 +638,14 @@ class _SplashState extends State<Splash> with SingleTickerProviderStateMixin {
           child: FadeTransition(
             opacity: c,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('مجاهد',
+              const Text('مجاهد',
                   style: TextStyle(fontSize: 76, fontWeight: FontWeight.bold, color: gold)),
               const SizedBox(height: 24),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(phrase,
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 22, color: Colors.white, height: 1.8)),
+                    style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.8)),
               ),
             ]),
           ),
@@ -355,11 +731,12 @@ class _ShellState extends State<Shell> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: Text('مجاهد',
+        title: const Text('مجاهد',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26, color: goldDark)),
         actions: [
           IconButton(
               icon: const Icon(Icons.brightness_6),
+              tooltip: 'الوضع الليلي',
               onPressed: () {
                 store.dark = !store.dark;
                 store.save();
@@ -390,7 +767,7 @@ class _ShellState extends State<Shell> {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(phrases[today() % phrases.length],
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark, height: 1.7)),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark, height: 1.7)),
       ))),
       Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
@@ -497,6 +874,10 @@ class _ShellState extends State<Shell> {
       card(Column(children: [
         Text('ختمة اليوم ${ar('$d')} من ${ar('$D')}  (${ar('${n.day}/${n.month}')})',
             style: const TextStyle(fontWeight: FontWeight.bold)),
+        if (hijriLabel(n).isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(hijriLabel(n), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
         const SizedBox(height: 10),
         ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -642,6 +1023,8 @@ class _JannahState extends State<Jannah> {
   }
 }
 
+/* ═══════════════════════════ صفحة القراءة ═══════════════════════════ */
+
 class ReaderPage extends StatefulWidget {
   final List<int> pages;
   final String? ctx;
@@ -652,7 +1035,9 @@ class ReaderPage extends StatefulWidget {
 
 class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   late int cur = widget.pages.first;
-  int sec = 0, rk = 0;
+  late final PageController controller =
+      PageController(initialPage: widget.pages.first - 1);
+  int sec = 0;
   bool active = true;
   Timer? timer;
 
@@ -679,65 +1064,88 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     timer?.cancel();
+    controller.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void onChanged(int p) {
+    setState(() {
+      cur = p;
+      sec = 0;
+    });
+    store.last = p;
+    store.save();
   }
 
   void go(int d) {
     final n = (cur + d).clamp(widget.pages.first, widget.pages.last).toInt();
     if (n == cur) return;
-    setState(() {
-      cur = n;
-      sec = 0;
-      rk++;
-    });
-    store.last = n;
-    store.save();
+    controller.animateToPage(n - 1,
+        duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(listenable: store, builder: (c, _) => page(c));
-  }
-
-  Widget page(BuildContext context) {
-    final theme = store.dark
-        ? QcfThemeData(
-            verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: const Color(0xFF14201A))
-        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: Colors.white);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('صفحة ${ar('$cur')}'),
-        actions: [
-          IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => store.setZoom(-0.1)),
-          IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => store.setZoom(0.1)),
-        ],
-      ),
-      body: Column(children: [
-        Expanded(
-          child: PageviewQuran(
-            key: ValueKey(rk),
-            initialPageNumber: cur,
-            sp: (1 / store.zoom).sp,
-            h: 1.h,
-            theme: theme,
-            onPageChanged: (p) {
-              cur = p;
-              sec = 0;
-              store.last = p;
-              store.save();
-            },
+    return ListenableBuilder(
+      listenable: store,
+      builder: (c, _) {
+        final dark = store.dark;
+        final colors = dark ? MushafColors.dark : MushafColors.light;
+        return Scaffold(
+          backgroundColor: colors.bg,
+          appBar: AppBar(
+            backgroundColor: colors.bg,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            iconTheme: IconThemeData(color: colors.accent),
+            title: Text('صفحة ${ar('$cur')}',
+                style: TextStyle(color: colors.accent, fontWeight: FontWeight.bold)),
+            actions: [
+              IconButton(
+                  icon: const Icon(Icons.zoom_out),
+                  tooltip: 'تصغير',
+                  onPressed: () => store.setZoom(-0.1)),
+              IconButton(
+                  icon: const Icon(Icons.zoom_in),
+                  tooltip: 'تكبير',
+                  onPressed: () => store.setZoom(0.1)),
+            ],
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-          child: Row(children: [
-            Expanded(child: FilledButton(onPressed: () => go(1), child: const Text('التالية'))),
-            const SizedBox(width: 10),
-            Expanded(child: OutlinedButton(onPressed: () => go(-1), child: const Text('السابقة'))),
-          ]),
-        ),
-      ]),
+          body: SafeArea(
+            child: Column(children: [
+              Expanded(
+                child: PageView.builder(
+                  controller: controller,
+                  itemCount: totalPagesCount,
+                  onPageChanged: (i) => onChanged(i + 1),
+                  itemBuilder: (c, i) => MushafPageView(
+                    page: i + 1,
+                    dark: dark,
+                    zoom: store.zoom,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                child: Row(children: [
+                  Expanded(
+                      child: FilledButton.icon(
+                          onPressed: cur < widget.pages.last ? () => go(1) : null,
+                          icon: const Icon(Icons.chevron_left),
+                          label: const Text('التالية'))),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: OutlinedButton.icon(
+                          onPressed: cur > widget.pages.first ? () => go(-1) : null,
+                          icon: const Icon(Icons.chevron_right),
+                          label: const Text('السابقة'))),
+                ]),
+              ),
+            ]),
+          ),
+        );
+      },
     );
   }
 }
