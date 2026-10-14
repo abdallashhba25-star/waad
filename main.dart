@@ -2,14 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Random;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
+import 'package:qcf_quran/qcf_quran.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const kPages = 604;
 const kPer = 2500;
 const kSecs = 20;
-const kBonus = 10000;
 const gold = Color(0xFFE0B34F);
 const goldDark = Color(0xFFB8892B);
 const prayers = ['الفجر', 'الظهر', 'العصر', 'المغرب', 'العشاء'];
@@ -87,11 +85,10 @@ int today() {
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
   int bal = 0, last = 1;
-  double fs = 28;
   bool dark = false, intro = false;
   Map<String, List<int>> pg = {};
   Set<String> counted = {};
-  Set<int> days = {}, bonus = {};
+  Set<int> days = {};
   Map<String, int> own = {};
 
   Future<void> load() async {
@@ -102,13 +99,11 @@ class Store extends ChangeNotifier {
       final j = jsonDecode(s);
       bal = j['bal'] ?? 0;
       last = j['last'] ?? 1;
-      fs = (j['fs'] ?? 28).toDouble();
       dark = j['dark'] ?? false;
       intro = j['intro'] ?? false;
       pg = (j['pg'] as Map? ?? {}).map((k, v) => MapEntry(k as String, List<int>.from(v)));
       counted = Set<String>.from(j['counted'] ?? []);
       days = Set<int>.from(j['days'] ?? []);
-      bonus = Set<int>.from(j['bonus'] ?? []);
       own = (j['own'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as int));
     } catch (_) {}
   }
@@ -117,9 +112,9 @@ class Store extends ChangeNotifier {
     sp.setString(
         'waad',
         jsonEncode({
-          'bal': bal, 'last': last, 'fs': fs, 'dark': dark, 'intro': intro,
+          'bal': bal, 'last': last, 'dark': dark, 'intro': intro,
           'pg': pg, 'counted': counted.toList(), 'days': days.toList(),
-          'bonus': bonus.toList(), 'own': own,
+          'own': own,
         }));
     notifyListeners();
   }
@@ -163,11 +158,6 @@ class Store extends ChangeNotifier {
       counted.add(k);
       bal += kPer;
       days.add(t);
-      final s = streak();
-      if (s > 0 && s % 7 == 0 && !bonus.contains(t)) {
-        bonus.add(t);
-        bal += kBonus;
-      }
     }
     if (ctx != null) {
       final l = pg.putIfAbsent(ctx, () => []);
@@ -183,34 +173,6 @@ class Store extends ChangeNotifier {
       save();
     }
   }
-
-  void setFs(double d) {
-    fs = (fs + d).clamp(18, 48).toDouble();
-    save();
-  }
-
-  Future<String?> fetchPage(int p) async {
-    final k = 'p$p';
-    final c = sp.getString(k);
-    if (c != null) return c;
-    for (final b in bases) {
-      try {
-        final r = await http
-            .get(Uri.parse('$b/verses/by_page/$p?fields=text_uthmani&per_page=50'))
-            .timeout(const Duration(seconds: 15));
-        if (r.statusCode == 200) {
-          final j = jsonDecode(utf8.decode(r.bodyBytes));
-          final vs = j['verses'] as List;
-          final t = vs.map((v) => '${v['text_uthmani']} ﴿${ar('${v['verse_number']}')}﴾').join(' ');
-          if (t.isNotEmpty) {
-            await sp.setString(k, t);
-            return t;
-          }
-        }
-      } catch (_) {}
-    }
-    return null;
-  }
 }
 
 final store = Store();
@@ -223,7 +185,7 @@ void main() async {
 
 ThemeData mk(Brightness b) {
   final base = ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF1F6B4F), brightness: b);
-  return base.copyWith(textTheme: GoogleFonts.cairoTextTheme(base.textTheme));
+  return base;
 }
 
 class WaadApp extends StatelessWidget {
@@ -234,7 +196,7 @@ class WaadApp extends StatelessWidget {
       listenable: store,
       builder: (c, _) => MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'وعد',
+        title: 'مجاهد',
         themeMode: store.dark ? ThemeMode.dark : ThemeMode.light,
         theme: mk(Brightness.light),
         darkTheme: mk(Brightness.dark),
@@ -288,14 +250,14 @@ class _SplashState extends State<Splash> with SingleTickerProviderStateMixin {
           child: FadeTransition(
             opacity: c,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('وعد',
-                  style: GoogleFonts.cairo(fontSize: 76, fontWeight: FontWeight.bold, color: gold)),
+              Text('مجاهد',
+                  style: TextStyle(fontSize: 76, fontWeight: FontWeight.bold, color: gold)),
               const SizedBox(height: 24),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(phrase,
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.cairo(fontSize: 22, color: Colors.white, height: 1.8)),
+                    style: TextStyle(fontSize: 22, color: Colors.white, height: 1.8)),
               ),
             ]),
           ),
@@ -381,11 +343,9 @@ class _ShellState extends State<Shell> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: Text('وعد',
-            style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 26, color: goldDark)),
+        title: Text('مجاهد',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26, color: goldDark)),
         actions: [
-          IconButton(icon: const Icon(Icons.text_decrease), onPressed: () => store.setFs(-2)),
-          IconButton(icon: const Icon(Icons.text_increase), onPressed: () => store.setFs(2)),
           IconButton(
               icon: const Icon(Icons.brightness_6),
               onPressed: () {
@@ -418,7 +378,7 @@ class _ShellState extends State<Shell> {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(phrases[today() % phrases.length],
             textAlign: TextAlign.center,
-            style: GoogleFonts.cairo(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark, height: 1.7)),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: goldDark, height: 1.7)),
       ))),
       Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
@@ -443,11 +403,6 @@ class _ShellState extends State<Shell> {
             const Text('يوم متتالي', style: TextStyle(fontSize: 11, color: Colors.white70)),
           ]),
         ]),
-      ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Text('🎁 هدية ${fmt(kBonus)} حسنة كل ٧ أيام متتالية',
-            style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ),
       card(Column(children: [
         Text('صفحات اليوم: ${ar('${store.todayCount()}')}'),
@@ -490,6 +445,21 @@ class _ShellState extends State<Shell> {
                   child: Text(ar('${i + 1}')))),
         ),
       ])),
+      const Padding(
+          padding: EdgeInsets.fromLTRB(6, 10, 6, 4),
+          child: Text('فهرس السور', style: TextStyle(fontWeight: FontWeight.bold))),
+      for (var n = 1; n <= 114; n++)
+        card(InkWell(
+          onTap: () => openFrom(getPageNumber(n, 1)),
+          child: Row(children: [
+            CircleAvatar(radius: 16, child: Text(ar('$n'), style: const TextStyle(fontSize: 12))),
+            const SizedBox(width: 12),
+            Expanded(
+                child: Text('سورة ${getSurahNameArabic(n)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+            Text('ص ${ar('${getPageNumber(n, 1)}')}', style: const TextStyle(color: Colors.grey)),
+          ]),
+        )),
     ]);
   }
 
@@ -670,20 +640,20 @@ class ReaderPage extends StatefulWidget {
 
 class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   int i = 0, sec = 0;
-  bool active = true, err = false;
+  bool active = true;
   Timer? timer;
-  String? text;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    store.last = widget.pages[0];
+    store.save();
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!active || !mounted) return;
       sec++;
       if (sec == kSecs) store.countPage(widget.pages[i], widget.ctx);
     });
-    load();
   }
 
   @override
@@ -698,22 +668,6 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> load() async {
-    final p = widget.pages[i];
-    store.last = p;
-    store.save();
-    setState(() {
-      text = null;
-      err = false;
-    });
-    final r = await store.fetchPage(p);
-    if (!mounted || p != widget.pages[i]) return;
-    setState(() {
-      text = r;
-      err = r == null;
-    });
-  }
-
   void go(int d) {
     final n = i + d;
     if (n < 0 || n >= widget.pages.length) return;
@@ -721,85 +675,44 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       i = n;
       sec = 0;
     });
-    load();
-  }
-
-  List<InlineSpan> spans(String t, double size) {
-    final re = RegExp(r'﴿([٠-٩]+)﴾');
-    final out = <InlineSpan>[];
-    var k = 0;
-    for (final m in re.allMatches(t)) {
-      if (m.start > k) out.add(TextSpan(text: t.substring(k, m.start)));
-      out.add(TextSpan(text: m.group(0), style: TextStyle(color: goldDark, fontSize: size * 0.8)));
-      k = m.end;
-    }
-    if (k < t.length) out.add(TextSpan(text: t.substring(k)));
-    return out;
+    store.last = widget.pages[n];
+    store.save();
   }
 
   @override
   Widget build(BuildContext context) {
     final p = widget.pages[i];
-    final cs = Theme.of(context).colorScheme;
-    final paper = store.dark ? const Color(0xFF14201A) : const Color(0xFFFFFBF0);
+    final theme = store.dark
+        ? QcfThemeData(
+            verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: const Color(0xFF14201A))
+        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: Colors.white);
     return Scaffold(
-      appBar: AppBar(
-        title: Text('صفحة ${ar('$p')}'),
-        actions: [
-          IconButton(icon: const Icon(Icons.text_decrease), onPressed: () => store.setFs(-2)),
-          IconButton(icon: const Icon(Icons.text_increase), onPressed: () => store.setFs(2)),
-        ],
-      ),
-      body: ListenableBuilder(
-        listenable: store,
-        builder: (c, _) => Column(children: [
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
-              decoration: BoxDecoration(
-                color: paper,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: gold, width: 2),
-              ),
-              child: Column(children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: text != null
-                        ? Text.rich(
-                            TextSpan(
-                              style: GoogleFonts.amiriQuran(
-                                  fontSize: store.fs, height: 2.2, color: cs.onSurface),
-                              children: spans(text!, store.fs),
-                            ),
-                            textAlign: TextAlign.justify,
-                            textDirection: TextDirection.rtl)
-                        : err
-                            ? Column(children: [
-                                const SizedBox(height: 40),
-                                const Text('تعذّر تحميل الصفحة، تأكد من الإنترنت'),
-                                TextButton(onPressed: load, child: const Text('إعادة المحاولة')),
-                              ])
-                            : const Padding(
-                                padding: EdgeInsets.only(top: 60),
-                                child: Center(child: CircularProgressIndicator())),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text('— ${ar('$p')} —', style: const TextStyle(color: goldDark, fontWeight: FontWeight.bold)),
-              ]),
+      appBar: AppBar(title: Text('صفحة ${ar('$p')}')),
+      body: Column(children: [
+        Expanded(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: gold, width: 2),
+            ),
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 3,
+              child: QcfPage(key: ValueKey(p), pageNumber: p, theme: theme),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Row(children: [
-              Expanded(child: FilledButton(onPressed: () => go(1), child: const Text('التالية'))),
-              const SizedBox(width: 10),
-              Expanded(child: OutlinedButton(onPressed: () => go(-1), child: const Text('السابقة'))),
-            ]),
-          ),
-        ]),
-      ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Row(children: [
+            Expanded(child: FilledButton(onPressed: () => go(1), child: const Text('التالية'))),
+            const SizedBox(width: 10),
+            Expanded(child: OutlinedButton(onPressed: () => go(-1), child: const Text('السابقة'))),
+          ]),
+        ),
+      ]),
     );
   }
 }
