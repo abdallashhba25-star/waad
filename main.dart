@@ -85,6 +85,7 @@ int today() {
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
   int bal = 0, last = 1;
+  double zoom = 1;
   bool dark = false, intro = false;
   Map<String, List<int>> pg = {};
   Set<String> counted = {};
@@ -99,6 +100,7 @@ class Store extends ChangeNotifier {
       final j = jsonDecode(s);
       bal = j['bal'] ?? 0;
       last = j['last'] ?? 1;
+      zoom = (j['zoom'] ?? 1).toDouble();
       dark = j['dark'] ?? false;
       intro = j['intro'] ?? false;
       pg = (j['pg'] as Map? ?? {}).map((k, v) => MapEntry(k as String, List<int>.from(v)));
@@ -112,7 +114,7 @@ class Store extends ChangeNotifier {
     sp.setString(
         'waad',
         jsonEncode({
-          'bal': bal, 'last': last, 'dark': dark, 'intro': intro,
+          'bal': bal, 'last': last, 'zoom': zoom, 'dark': dark, 'intro': intro,
           'pg': pg, 'counted': counted.toList(), 'days': days.toList(),
           'own': own,
         }));
@@ -163,6 +165,11 @@ class Store extends ChangeNotifier {
       final l = pg.putIfAbsent(ctx, () => []);
       if (!l.contains(page)) l.add(page);
     }
+    save();
+  }
+
+  void setZoom(double d) {
+    zoom = (zoom + d).clamp(0.6, 2.2).toDouble();
     save();
   }
 
@@ -681,27 +688,62 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(listenable: store, builder: (c, _) => page(c));
+  }
+
+  Widget page(BuildContext context) {
     final p = widget.pages[i];
+    const pw = 392.7272, ph = 800.7272; // التصميم المرجعي لخط المصحف
+    final paper = store.dark ? const Color(0xFF14201A) : Colors.white;
     final theme = store.dark
-        ? QcfThemeData(
-            verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: const Color(0xFF14201A))
-        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: Colors.white);
+        ? QcfThemeData(verseTextColor: const Color(0xFFEDE7D5), pageBackgroundColor: paper)
+        : QcfThemeData(verseTextColor: Colors.black, pageBackgroundColor: paper);
     return Scaffold(
-      appBar: AppBar(title: Text('صفحة ${ar('$p')}')),
+      appBar: AppBar(
+        title: Text('صفحة ${ar('$p')}'),
+        actions: [
+          IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => store.setZoom(-0.15)),
+          IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => store.setZoom(0.15)),
+        ],
+      ),
       body: Column(children: [
         Expanded(
           child: Container(
-            margin: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+            margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
+              color: paper,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: gold, width: 2),
             ),
-            child: InteractiveViewer(
-              minScale: 1,
-              maxScale: 3,
-              child: QcfPage(key: ValueKey(p), pageNumber: p, theme: theme),
-            ),
+            child: LayoutBuilder(builder: (c, cons) {
+              final scale = cons.maxWidth / pw * store.zoom;
+              return SingleChildScrollView(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: cons.maxWidth),
+                    child: Center(
+                      child: SizedBox(
+                        width: pw * scale,
+                        height: ph * scale,
+                        child: FittedBox(
+                          fit: BoxFit.fill,
+                          child: SizedBox(
+                            width: pw,
+                            height: ph,
+                            child: MediaQuery(
+                              data: MediaQuery.of(c).copyWith(size: const Size(pw, ph)),
+                              child: QcfPage(key: ValueKey(p), pageNumber: p, theme: theme),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
           ),
         ),
         Padding(
