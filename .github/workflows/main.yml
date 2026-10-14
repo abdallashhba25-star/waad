@@ -12,6 +12,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.7'
       - name: Create project
         run: |
           flutter create --platforms=android --project-name waad --org com.waad app
@@ -19,8 +20,10 @@ jobs:
           cp main.dart app/lib/main.dart
           cp icon.png app/icon.png
           cp icon_fg.png app/icon_fg.png
-          sed -i '0,/<application/s//<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' app/android/app/src/main/AndroidManifest.xml
+          sed -i '0,/<application/s//<uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"\/>\n    <uses-permission android:name="android.permission.VIBRATE"\/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"\/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"\/>\n    <application/' app/android/app/src/main/AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="مجاهد"/' app/android/app/src/main/AndroidManifest.xml
+          sed -i 's/coreLibraryDesugaringEnabled false/coreLibraryDesugaringEnabled true/' app/android/app/build.gradle.kts
+          sed -i 's/coreLibraryDesugaring("[^"]*")/coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")/' app/android/app/build.gradle.kts
       - name: Get packages
         working-directory: app
         run: flutter pub get
