@@ -25,7 +25,15 @@ import 'package:url_launcher/url_launcher.dart';
 // ---------------------------------------------------------------------------
 
 const int kPages = 604;
-const int kPerPage = 2500;
+
+/// رصيد كل صفحة: رقم عشوائي بين 500 و 5000 نقطة.
+/// (المتوسط 2750 يُستخدم فقط في التقديرات التقريبية بالواجهة).
+const int kPerPageMin = 500;
+const int kPerPageMax = 5000;
+const int kPerPageAvg = (kPerPageMin + kPerPageMax) ~/ 2;
+final math.Random _perPageRng = math.Random();
+int kPerPage() =>
+    kPerPageMin + _perPageRng.nextInt(kPerPageMax - kPerPageMin + 1);
 const int kSecondsToCount = 20;
 const String kAppName = 'مجاهد';
 const String kNote = 'رصيد رمزي للتشجيع، والجزاء الحقيقي بيد الله';
@@ -214,16 +222,16 @@ class Item {
 }
 
 const List<Item> kItems = [
-  Item('n', '🌴', 'نخلة', 100000),
-  Item('r', '🌊', 'نهر', 250000),
-  Item('g', '🍇', 'بستان أعناب', 5000000),
-  Item('s', '⛲', 'عين سلسبيل', 20000000),
-  Item('a', '🛋', 'سرر وأرائك', 50000000),
-  Item('h', '🏠', 'بيت في الجنة', 100000000),
-  Item('t', '⛺', 'خيمة من لؤلؤة', 300000000),
-  Item('u', '🌸', 'حور عين', 400000000),
-  Item('d', '👘', 'ثياب من سندس وإستبرق', 800000000),
-  Item('c', '🏰', 'قصر', 100000000000),
+  Item('n', '🌴', 'نخلة', 1000000),
+  Item('r', '🌊', 'نهر', 2500000),
+  Item('g', '🍇', 'بستان أعناب', 50000000),
+  Item('s', '⛲', 'عين سلسبيل', 200000000),
+  Item('a', '🛋', 'سرر وأرائك', 500000000),
+  Item('h', '🏠', 'بيت في الجنة', 1000000000),
+  Item('t', '⛺', 'خيمة من لؤلؤة', 3000000000),
+  Item('u', '🌸', 'حور عين', 4000000000),
+  Item('d', '👘', 'ثياب من سندس وإستبرق', 8000000000),
+  Item('c', '🏰', 'قصر', 1000000000000),
 ];
 
 // ---------------------------------------------------------------------------
@@ -355,7 +363,7 @@ class Store extends ChangeNotifier {
     final k = '$t:$page';
     if (!counted.contains(k)) {
       counted.add(k);
-      bal += kPerPage;
+      bal += kPerPage();
       days.add(t);
     }
     if (ctx != null) {
@@ -1346,7 +1354,7 @@ class _HomeTabState extends State<HomeTab> {
                 shape: BoxShape.circle,
               ),
               alignment: Alignment.center,
-              child: const Text('✈️', style: TextStyle(fontSize: 26)),
+              child: const Text('📩', style: TextStyle(fontSize: 26)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1366,9 +1374,14 @@ class _HomeTabState extends State<HomeTab> {
                     ),
                   ),
                   const SizedBox(height: 3),
+                  const Text(
+                    'مش طالب غير دعوه حلوه 😊',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 3),
                   const Row(
                     children: [
-                      Text('✈️', style: TextStyle(fontSize: 13)),
+                      Text('📩', style: TextStyle(fontSize: 13)),
                       SizedBox(width: 4),
                       Text(
                         '@abdoshhba',
@@ -1873,15 +1886,16 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
             child: LayoutBuilder(
               builder: (context, cons) {
                 // عند تكبير الخط يزيد طول الصفحة عن ارتفاع الشاشة، فنجعلها
-                // قابلة للتمرير الرأسي حتى تظهر الأسطر الأخيرة بدل أن تُقصّ.
+                // قابلة للتمرير الرأسي دائمًا وبمساحة إضافية كافية، حتى يمكن
+                // الوصول لآخر سطر في الصفحة مهما كبُر الخط أو صغُر.
                 final vh = cons.maxHeight;
                 final z = _scale > 1.0 ? _scale : 1.0;
+                final extra = z > 1.0 ? vh * (z - 1.0) * 1.8 : 0.0;
                 return SingleChildScrollView(
-                  physics: z > 1.0
-                      ? const BouncingScrollPhysics()
-                      : const NeverScrollableScrollPhysics(),
+                  physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics()),
                   child: SizedBox(
-                    height: vh * z,
+                    height: vh + extra,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                       child: ClipRRect(
@@ -2241,7 +2255,7 @@ class _JannahTabState extends State<JannahTab> {
 
   Widget _itemCard(Item x, bool dark) {
     final ok = store.bal >= x.price;
-    final need = x.price > store.bal ? ((x.price - store.bal) / kPerPage).ceil() : 0;
+    final need = x.price > store.bal ? ((x.price - store.bal) / kPerPageAvg).ceil() : 0;
     return Panel(
       child: Column(
         children: [
@@ -2498,7 +2512,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
               Text('أيام القراءة: ${ar('${store.days.length}')}',
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              Text('صفحات مقروءة إجمالًا: ${ar('${(store.bal / kPerPage).round()}')}',
+              Text('صفحات مقروءة إجمالًا: ${ar('${(store.bal / kPerPageAvg).round()}')}',
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
