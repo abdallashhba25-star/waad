@@ -1825,6 +1825,36 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   /// (وإلا تنكسر أسطر الصفحة القرآنية).
   double get _scale => store.zoom.clamp(0.75, 1.5).toDouble();
 
+  void _setZoom(double v) {
+    store.zoom = double.parse(v.clamp(0.75, 1.5).toStringAsFixed(2));
+    store.save();
+  }
+
+  /// أزرار تكبير/تصغير ظاهرة على الشاشة (بدل القائمة المخفية)
+  Widget _zoomPad() {
+    final dark = store.dark;
+    Widget btn(IconData i, VoidCallback f) => InkWell(
+          onTap: f,
+          borderRadius: BorderRadius.circular(22),
+          child: Padding(padding: const EdgeInsets.all(11), child: Icon(i, size: 24)),
+        );
+    return Material(
+      elevation: 5,
+      color: (dark ? kNightSurface : Colors.white).withOpacity(0.95),
+      borderRadius: BorderRadius.circular(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          btn(Icons.add, () => _setZoom(store.zoom + 0.1)),
+          Text('${ar('${(_scale * 100).round()}')}٪',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+          btn(Icons.remove, () => _setZoom(store.zoom - 0.1)),
+          btn(Icons.restart_alt, () => _setZoom(1.0)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(listenable: store, builder: (c, _) => _page(context));
@@ -1864,8 +1894,8 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
             icon: const Icon(Icons.more_vert),
             onSelected: (v) {
               if (v == 'page') _askPage();
-              if (v == 'zoom_in') store.setZoom(0.05);
-              if (v == 'zoom_out') store.setZoom(-0.05);
+              if (v == 'zoom_in') _setZoom(store.zoom + 0.1);
+              if (v == 'zoom_out') _setZoom(store.zoom - 0.1);
               if (v == 'reset') {
                 store.zoom = 1.0;
                 store.save();
@@ -1883,44 +1913,49 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       body: Column(
         children: [
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, cons) {
-                // عند تكبير الخط يزيد طول الصفحة عن ارتفاع الشاشة، فنجعلها
-                // قابلة للتمرير الرأسي دائمًا وبمساحة إضافية كافية، حتى يمكن
-                // الوصول لآخر سطر في الصفحة مهما كبُر الخط أو صغُر.
-                final vh = cons.maxHeight;
-                final z = _scale > 1.0 ? _scale : 1.0;
-                final extra = z > 1.0 ? vh * (z - 1.0) * 1.8 : 0.0;
-                return SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                      parent: BouncingScrollPhysics()),
-                  child: SizedBox(
-                    height: vh + extra,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: PageviewQuran(
-                          key: ValueKey(rk),
-                          initialPageNumber: cur,
-                          sp: _scale.sp,
-                          h: _scale.h,
-                          theme: theme,
-                          onPageChanged: (p) {
-                            setState(() {
-                              cur = p;
-                              sec = 0;
-                              counted = false;
-                            });
-                            store.lastPage = p;
-                            store.save();
-                          },
+            child: Stack(
+              children: [
+                LayoutBuilder(
+                  builder: (context, cons) {
+                    // صفحة المصحف مصمَّمة لارتفاع الشاشة الكاملة، بينما المساحة المتاحة
+                    // هنا أقل (الشريط العلوي والسفلي)، فنعطيها ارتفاعها الكامل مضروبًا في
+                    // التكبير ونجعل المنطقة كلها قابلة للتمرير حتى آخر سطر.
+                    final screenH = MediaQuery.of(context).size.height;
+                    final need = screenH * _scale;
+                    final h = (need > cons.maxHeight ? need : cons.maxHeight) + 24;
+                    return SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics()),
+                      child: SizedBox(
+                        height: h,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: PageviewQuran(
+                              key: ValueKey(rk),
+                              initialPageNumber: cur,
+                              sp: _scale.sp,
+                              h: _scale.h,
+                              theme: theme,
+                              onPageChanged: (p) {
+                                setState(() {
+                                  cur = p;
+                                  sec = 0;
+                                  counted = false;
+                                });
+                                store.lastPage = p;
+                                store.save();
+                              },
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+                Positioned(left: 8, bottom: 16, child: _zoomPad()),
+              ],
             ),
           ),
           _bottomBar(),
