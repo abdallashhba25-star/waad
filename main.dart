@@ -18,6 +18,7 @@ import 'package:qcf_quran/qcf_quran.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:url_launcher/url_launcher.dart';
 
 // ---------------------------------------------------------------------------
 //  ثوابت عامة
@@ -1318,7 +1319,82 @@ class _HomeTabState extends State<HomeTab> {
             ],
           ),
         ),
+
+        _developerCard(dark),
       ],
+    );
+  }
+
+  /// بطاقة مطوّر التطبيق مع رابط التواصل عبر تيليجرام.
+  Widget _developerCard(bool dark) {
+    return Panel(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () async {
+          final uri = Uri.parse('https://t.me/abdoshhba');
+          try {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } catch (_) {}
+        },
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: const Color(0xFF2AABEE).withOpacity(0.14),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: const Text('✈️', style: TextStyle(fontSize: 26)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('مطوّر التطبيق',
+                      style: TextStyle(fontSize: 11, color: Colors.grey)),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Abdo',
+                    style: TextStyle(
+                      fontFamily: 'Amiri',
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: dark ? kGoldLight : kGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  const Row(
+                    children: [
+                      Text('✈️', style: TextStyle(fontSize: 13)),
+                      SizedBox(width: 4),
+                      Text(
+                        '@abdoshhba',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF2AABEE),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'للتواصل عبر تيليجرام',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.open_in_new, size: 18, color: Colors.grey),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1794,27 +1870,43 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       body: Column(
         children: [
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: PageviewQuran(
-                  key: ValueKey(rk),
-                  initialPageNumber: cur,
-                  sp: _scale.sp,
-                  h: _scale.h,
-                  theme: theme,
-                  onPageChanged: (p) {
-                    setState(() {
-                      cur = p;
-                      sec = 0;
-                      counted = false;
-                    });
-                    store.lastPage = p;
-                    store.save();
-                  },
-                ),
-              ),
+            child: LayoutBuilder(
+              builder: (context, cons) {
+                // عند تكبير الخط يزيد طول الصفحة عن ارتفاع الشاشة، فنجعلها
+                // قابلة للتمرير الرأسي حتى تظهر الأسطر الأخيرة بدل أن تُقصّ.
+                final vh = cons.maxHeight;
+                final z = _scale > 1.0 ? _scale : 1.0;
+                return SingleChildScrollView(
+                  physics: z > 1.0
+                      ? const BouncingScrollPhysics()
+                      : const NeverScrollableScrollPhysics(),
+                  child: SizedBox(
+                    height: vh * z,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: PageviewQuran(
+                          key: ValueKey(rk),
+                          initialPageNumber: cur,
+                          sp: _scale.sp,
+                          h: _scale.h,
+                          theme: theme,
+                          onPageChanged: (p) {
+                            setState(() {
+                              cur = p;
+                              sec = 0;
+                              counted = false;
+                            });
+                            store.lastPage = p;
+                            store.save();
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           _bottomBar(),
