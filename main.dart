@@ -1823,33 +1823,45 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// يختار مستوى التكبير/التصغير مع الحفاظ على تطابق حجم الخط وارتفاع السطر
   /// (وإلا تنكسر أسطر الصفحة القرآنية).
-  double get _scale => store.zoom.clamp(0.75, 1.5).toDouble();
+  double get _scale => store.zoom.clamp(0.8, 2.0).toDouble();
+
+  /// حجم الخط الأساسي الذي لا تتكسر عنده الأسطر (لا يتغير أبدًا)
+  static const double _base = 0.92;
 
   void _setZoom(double v) {
-    store.zoom = double.parse(v.clamp(0.75, 1.5).toStringAsFixed(2));
+    store.zoom = double.parse(v.clamp(0.8, 2.0).toStringAsFixed(2));
     store.save();
   }
 
-  /// أزرار تكبير/تصغير ظاهرة على الشاشة (بدل القائمة المخفية)
-  Widget _zoomPad() {
+  /// شريط تكبير/تصغير رفيع أعلى الصفحة
+  Widget _zoomBar() {
     final dark = store.dark;
-    Widget btn(IconData i, VoidCallback f) => InkWell(
-          onTap: f,
-          borderRadius: BorderRadius.circular(22),
-          child: Padding(padding: const EdgeInsets.all(11), child: Icon(i, size: 24)),
+    Widget btn(IconData i, VoidCallback f, String tip) => IconButton(
+          tooltip: tip,
+          onPressed: f,
+          visualDensity: VisualDensity.compact,
+          icon: Icon(i, size: 24),
         );
-    return Material(
-      elevation: 5,
-      color: (dark ? kNightSurface : Colors.white).withOpacity(0.95),
-      borderRadius: BorderRadius.circular(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+    return Container(
+      height: 46,
+      decoration: BoxDecoration(
+        color: dark ? kNightSurface : Colors.white,
+        border: Border(
+            bottom: BorderSide(color: dark ? const Color(0xFF233A30) : const Color(0xFFE7DDC4))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          btn(Icons.add, () => _setZoom(store.zoom + 0.1)),
-          Text('${ar('${(_scale * 100).round()}')}٪',
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-          btn(Icons.remove, () => _setZoom(store.zoom - 0.1)),
-          btn(Icons.restart_alt, () => _setZoom(1.0)),
+          btn(Icons.zoom_out, () => _setZoom(store.zoom - 0.15), 'تصغير'),
+          SizedBox(
+            width: 70,
+            child: Text('${ar('${(_scale * 100).round()}')}٪',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          ),
+          btn(Icons.zoom_in, () => _setZoom(store.zoom + 0.15), 'تكبير'),
+          const SizedBox(width: 14),
+          btn(Icons.restart_alt, () => _setZoom(1.0), 'الحجم الأصلي'),
         ],
       ),
     );
@@ -1894,8 +1906,8 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
             icon: const Icon(Icons.more_vert),
             onSelected: (v) {
               if (v == 'page') _askPage();
-              if (v == 'zoom_in') _setZoom(store.zoom + 0.1);
-              if (v == 'zoom_out') _setZoom(store.zoom - 0.1);
+              if (v == 'zoom_in') _setZoom(store.zoom + 0.15);
+              if (v == 'zoom_out') _setZoom(store.zoom - 0.15);
               if (v == 'reset') {
                 store.zoom = 1.0;
                 store.save();
@@ -1912,50 +1924,60 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
+          _zoomBar(),
           Expanded(
-            child: Stack(
-              children: [
-                LayoutBuilder(
-                  builder: (context, cons) {
-                    // صفحة المصحف مصمَّمة لارتفاع الشاشة الكاملة، بينما المساحة المتاحة
-                    // هنا أقل (الشريط العلوي والسفلي)، فنعطيها ارتفاعها الكامل مضروبًا في
-                    // التكبير ونجعل المنطقة كلها قابلة للتمرير حتى آخر سطر.
-                    final screenH = MediaQuery.of(context).size.height;
-                    final need = screenH * _scale;
-                    final h = (need > cons.maxHeight ? need : cons.maxHeight) + 24;
-                    return SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(
-                          parent: BouncingScrollPhysics()),
-                      child: SizedBox(
-                        height: h,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: PageviewQuran(
-                              key: ValueKey(rk),
-                              initialPageNumber: cur,
-                              sp: _scale.sp,
-                              h: _scale.h,
-                              theme: theme,
-                              onPageChanged: (p) {
-                                setState(() {
-                                  cur = p;
-                                  sec = 0;
-                                  counted = false;
-                                });
-                                store.lastPage = p;
-                                store.save();
-                              },
-                            ),
-                          ),
-                        ),
+            child: LayoutBuilder(
+              builder: (context, cons) {
+                // الصفحة تُرسم دائمًا بحجمها الطبيعي (فلا تتكسر الأسطر مهما كبّرت)،
+                // ثم تُكبَّر أو تُصغَّر كوحدة واحدة قابلة للتمرير رأسيًا وأفقيًا.
+                final pw = cons.maxWidth;
+                final ph = MediaQuery.of(context).size.height;
+                final z = _scale;
+                final page = SizedBox(
+                  width: pw,
+                  height: ph,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: PageviewQuran(
+                        key: ValueKey(rk),
+                        initialPageNumber: cur,
+                        sp: _base.sp,
+                        h: _base.h,
+                        theme: theme,
+                        onPageChanged: (p) {
+                          setState(() {
+                            cur = p;
+                            sec = 0;
+                            counted = false;
+                          });
+                          store.lastPage = p;
+                          store.save();
+                        },
                       ),
-                    );
-                  },
-                ),
-                Positioned(left: 8, bottom: 16, child: _zoomPad()),
-              ],
+                    ),
+                  ),
+                );
+                // عند التكبير نعطّل سحب الصفحات الجانبي ليصبح السحب للتحريك داخل
+                // الصفحة المكبّرة (والتنقل بين الصفحات يتم بزرّي التالية/السابقة).
+                final scaled = SizedBox(
+                  width: pw * z,
+                  height: ph * z,
+                  child: FittedBox(
+                    fit: BoxFit.fill,
+                    child: IgnorePointer(ignoring: z > 1.0, child: page),
+                  ),
+                );
+                final body = z > 1.0
+                    ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: scaled)
+                    : Center(child: scaled);
+                return SingleChildScrollView(
+                  key: ValueKey('v$rk'),
+                  physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                  child: body,
+                );
+              },
             ),
           ),
           _bottomBar(),
@@ -2515,15 +2537,15 @@ class _SettingsTabState extends State<SettingsTab> {
                 subtitle: Text('${ar('${(store.zoom * 100).round()}')}٪'),
               ),
               Slider(
-                value: store.zoom.clamp(0.75, 1.5).toDouble(),
-                min: 0.75,
-                max: 1.5,
-                divisions: 15,
+                value: store.zoom.clamp(0.8, 2.0).toDouble(),
+                min: 0.8,
+                max: 2.0,
+                divisions: 24,
                 onChanged: (v) => setState(() => store.zoom = v),
                 onChangeEnd: (_) => store.save(),
               ),
               const Text(
-                'حجم الخط وارتفاع السطر يتغيّران معًا للحفاظ على تنسيق الصفحة كما في المصحف المطبوع',
+                'التكبير يكبّر الصفحة كلها بنفس تنسيق المصحف المطبوع دون تكسير الأسطر',
                 style: TextStyle(fontSize: 11, color: Colors.grey),
               ),
             ],
