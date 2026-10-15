@@ -34,7 +34,7 @@ const int kPerPageAvg = (kPerPageMin + kPerPageMax) ~/ 2;
 final math.Random _perPageRng = math.Random();
 int kPerPage() =>
     kPerPageMin + _perPageRng.nextInt(kPerPageMax - kPerPageMin + 1);
-const int kSecondsToCount = 20;
+const int kSecondsToCount = 40;
 const String kAppName = 'مجاهد';
 const String kNote = 'رصيد رمزي للتشجيع، والجزاء الحقيقي بيد الله';
 
@@ -107,6 +107,15 @@ const List<String> kAfterPrayerBodies = [
   'العصر… وعدك مع نفسك ينتظرك، لا تؤجّله',
   'المغرب… آناء الليل وأطراف النهار، اقرأ وارتقِ',
   'العشاء… اختم يومك بصفحة، يشفع لك القرآن غدًا',
+];
+
+/// عبارات احتفاء تظهر عند إتمام ختمة اليوم كاملة.
+const List<String> kKhatmaPraise = [
+  'ما شاء الله! أتممت ختمة اليوم كاملة 🌟\nثباتُك اليوم نورٌ لك غدًا، وشاهدٌ لك يوم القيامة',
+  'يومٌ كامل مع القرآن… مبارك! 🏆\nكل صفحة قرأتها درجةٌ ترفعك عند ربك',
+  'أتممت وردك من أوله لآخره ✨\nالقرآن يحب أهله… وأنت اليوم منهم',
+  'ختمة اليوم تمّت على أكمل وجه 🌙\nاستمر، فالقلب المتعلق بالقرآن لا يشقى',
+  'خمس صلوات… وخمسة أوراد مكتملة 💚\nهذا هو النصر الصغير الذي يصنع العظيم',
 ];
 
 /// طرق حساب مواقيت الصلاة — الترتيب مطابق لـ CalculationMethod.values.
@@ -249,6 +258,7 @@ class Store extends ChangeNotifier {
   Set<int> days = {};
   Map<String, int> own = {};
   List<int> bookmarks = [];
+  int firstDay = 0;
 
   // العرض
   double zoom = 1.0;
@@ -285,6 +295,7 @@ class Store extends ChangeNotifier {
         (k, v) => MapEntry(k as String, (v as num).toInt()),
       );
       bookmarks = (j['marks'] as List? ?? const []).map((e) => (e as num).toInt()).toList();
+      firstDay = (j['firstDay'] as num?)?.toInt() ?? 0;
       notifEnabled = j['notif'] as bool? ?? true;
       vibrate = j['vib'] as bool? ?? true;
       notifDelay = (j['delay'] as num?)?.toInt() ?? 5;
@@ -294,6 +305,7 @@ class Store extends ChangeNotifier {
       lon = (j['lon'] as num?)?.toDouble();
       city = j['city'] as String? ?? '';
     } catch (_) {}
+    if (firstDay == 0) firstDay = today();
   }
 
   void save() {
@@ -310,6 +322,7 @@ class Store extends ChangeNotifier {
         'days': days.toList(),
         'own': own,
         'marks': bookmarks,
+        'firstDay': firstDay,
         'notif': notifEnabled,
         'vib': vibrate,
         'delay': notifDelay,
@@ -378,6 +391,16 @@ class Store extends ChangeNotifier {
     save();
   }
 
+  /// يعيّن التكبير لقيمة مطلقة (يُستخدم مع التكبير بالأصابع).
+  void setZoomAbs(double v, {bool persist = true}) {
+    zoom = v.clamp(0.6, 2.0).toDouble();
+    if (persist) {
+      save();
+    } else {
+      notifyListeners();
+    }
+  }
+
   void buy(Item x) {
     if (bal >= x.price) {
       bal -= x.price;
@@ -407,6 +430,19 @@ class Store extends ChangeNotifier {
   /// نسبة الإنجاز من قائمة صفحات معيّنة في يوم اليوم.
   double pagesProgress(List<int> pages) =>
       pages.isEmpty ? 0 : pagesRead(pages) / pages.length;
+
+  /// هل أُتمّت ختمة يوم معيّن (أوراد الصلوات الخمس كلها مكتملة)؟
+  bool khatmaDayDone(int y, int m, int d) {
+    final md = DateTime(y, m + 1, 0).day;
+    final D = md < 30 ? md : 30;
+    if (d < 1 || d > D) return false;
+    for (var i = 0; i < 5; i++) {
+      final r = plan(d, i, D);
+      final got = (pg['$y-$m-$d-$i'] ?? []).length;
+      if (got < r[1] - r[0] + 1) return false;
+    }
+    return true;
+  }
 }
 
 final Store store = Store();
@@ -1775,6 +1811,10 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
   bool active = true;
   Timer? timer;
   bool counted = false;
+  bool hiddenUI = false;
+  final Map<int, Offset> _touches = {};
+  double? _pinchDist;
+  double _pinchZoom = 1.0;
 
   @override
   void initState() {
@@ -1886,9 +1926,9 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
 
     final surah = surahNameForPage(cur);
 
-    return Scaffold(
+    final scaffold = Scaffold(
       backgroundColor: dark ? kNightBg : kCream,
-      appBar: AppBar(
+      appBar: hiddenUI ? null : AppBar(
         title: Column(
           children: [
             Text('سورة $surah', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -1924,7 +1964,7 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
-          _zoomBar(),
+          if (!hiddenUI) _zoomBar(),
           Expanded(
             child: LayoutBuilder(
               builder: (context, cons) {
@@ -1980,10 +2020,54 @@ class _ReaderState extends State<ReaderPage> with WidgetsBindingObserver {
               },
             ),
           ),
-          _bottomBar(),
+          // علامة صح صغيرة تحت الصفحة عند احتساب قراءتها
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: store.counted.contains('${today()}:$cur')
+                ? const Padding(
+                    key: ValueKey('done'),
+                    padding: EdgeInsets.only(bottom: 4),
+                    child: Icon(Icons.check_circle, size: 18, color: kGold),
+                  )
+                : const SizedBox(key: ValueKey('wait'), height: 22),
+          ),
+          if (!hiddenUI) _bottomBar(),
         ],
       ),
     );
+    return Listener(
+      onPointerDown: (e) {
+        _touches[e.pointer] = e.position;
+        if (_touches.length == 2) {
+          final p = _touches.values.toList();
+          _pinchDist = (p[0] - p[1]).distance;
+          _pinchZoom = store.zoom;
+        }
+      },
+      onPointerMove: (e) {
+        if (!_touches.containsKey(e.pointer)) return;
+        _touches[e.pointer] = e.position;
+        if (_touches.length == 2 && _pinchDist != null && _pinchDist! > 0) {
+          final p = _touches.values.toList();
+          final dist = (p[0] - p[1]).distance;
+          store.setZoomAbs(_pinchZoom * dist / _pinchDist!, persist: false);
+        }
+      },
+      onPointerUp: (e) => _endTouch(e.pointer),
+      onPointerCancel: (e) => _endTouch(e.pointer),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => hiddenUI = !hiddenUI),
+        child: scaffold,
+      ),
+    );
+  }
+
+  void _endTouch(int pointer) {
+    final wasPinch = _touches.length >= 2;
+    _touches.remove(pointer);
+    if (_touches.length < 2) _pinchDist = null;
+    if (wasPinch && _touches.isEmpty) store.save();
   }
 
   Widget _bottomBar() {
@@ -2126,7 +2210,51 @@ class KhatmaTab extends StatelessWidget {
         ),
         const SectionTitle('ورد اليوم', icon: Icons.auto_stories),
         for (var i = 0; i < 5; i++) _prayerRow(context, n, d, D, i),
+        if (_allDone(n, d, D)) _doneBanner(d),
       ],
+    );
+  }
+
+  bool _allDone(DateTime n, int d, int D) {
+    for (var i = 0; i < 5; i++) {
+      if (!_isDone(n, d, D, i)) return false;
+    }
+    return true;
+  }
+
+  /// لافتة احتفاء تحفيزية تظهر تحت الصلوات عند إتمام ختمة اليوم.
+  Widget _doneBanner(int d) {
+    final dark = store.dark;
+    final praise = kKhatmaPraise[d % kKhatmaPraise.length];
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: dark ? const [kGreenMid, kGreenDeep] : const [kGreen, kGreenMid],
+        ),
+        border: Border.all(color: kGold, width: 1.6),
+        boxShadow: [BoxShadow(color: kGold.withOpacity(0.25), blurRadius: 16, offset: const Offset(0, 6))],
+      ),
+      child: Column(
+        children: [
+          const Text('🏆', style: TextStyle(fontSize: 44)),
+          const SizedBox(height: 8),
+          const Text(
+            'أتممت ختمة اليوم!',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: kGoldLight),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            praise,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, color: Colors.white, height: 1.9),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2185,11 +2313,36 @@ class KhatmaTab extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text('ص ${ar('${r[0]}')} – ${ar('${r[1]}')}  •  ${ar('$read')}/${ar('$total')}',
                         style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    if (read > 0 && !done) ...[
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: read / total,
+                          minHeight: 4,
+                          backgroundColor: Colors.grey.withOpacity(0.18),
+                          valueColor: const AlwaysStoppedAnimation<Color>(kGold),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
               if (done)
                 const Text('تمت', style: TextStyle(fontWeight: FontWeight.bold, color: kGold))
+              else if (read > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: kGold.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: kGold.withOpacity(0.45)),
+                  ),
+                  child: Text(
+                    'باقي ${ar('${total - read}')}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: kGold),
+                  ),
+                )
               else
                 const Icon(Icons.chevron_left, color: Colors.grey),
             ],
@@ -2236,7 +2389,7 @@ class _JannahTabState extends State<JannahTab> {
         .join(' ')
         .trim();
     return Container(
-      height: 176,
+      height: 210,
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
@@ -2312,38 +2465,138 @@ class _JannahTabState extends State<JannahTab> {
 
   Widget _itemCard(Item x, bool dark) {
     final ok = store.bal >= x.price;
-    final need = x.price > store.bal ? ((x.price - store.bal) / kPerPageAvg).ceil() : 0;
+    final owned = store.own[x.id] ?? 0;
+    final remain = x.price > store.bal ? x.price - store.bal : 0;
+    final prog = (store.bal / x.price).clamp(0, 1).toDouble();
     return Panel(
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${x.emoji} ${x.name}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              Text('${fmt(x.price)} حسنة', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [kGold.withOpacity(0.24), kGold.withOpacity(0.05)],
+                  ),
+                  border: Border.all(color: kGold.withOpacity(0.55), width: 1.5),
+                  boxShadow: [BoxShadow(color: kGold.withOpacity(0.18), blurRadius: 12, offset: const Offset(0, 4))],
+                ),
+                child: Center(child: Text(x.emoji, style: const TextStyle(fontSize: 52))),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(x.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+                    const SizedBox(height: 4),
+                    Text('${fmt(x.price)} عملة', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                    if (owned > 0) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: kGold.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: kGold.withOpacity(0.55)),
+                        ),
+                        child: Text(
+                          'تم اقتناؤها ✓${owned > 1 ? ' ×${ar('$owned')}' : ''}',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: kGold),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: LinearProgressIndicator(
-              value: (store.bal / x.price).clamp(0, 1).toDouble(),
-              minHeight: 8,
+              value: prog,
+              minHeight: 10,
+              backgroundColor: Colors.grey.withOpacity(0.15),
+              valueColor: AlwaysStoppedAnimation<Color>(ok ? kGold : kGreenMid),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                ok ? 'متاح للاقتناء' : 'فاضل ${fmt(need)} صفحة',
-                style: TextStyle(fontSize: 12, color: ok ? kGold : Colors.grey),
+              Expanded(
+                child: Text(
+                  ok ? 'متاحة للاقتناء الآن ✨' : 'فاضل ${fmt(remain)} عملة',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: ok ? kGold : Colors.grey,
+                  ),
+                ),
               ),
-              FilledButton(
-                onPressed: ok ? () => store.buy(x) : null,
-                child: const Text('اقتناء'),
+              FilledButton.icon(
+                onPressed: ok ? () => _buy(x) : null,
+                icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                label: const Text('اقتناء'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _buy(Item x) {
+    store.buy(x);
+    _buyDialog(x);
+  }
+
+  /// رسالة احتفاء عند الاقتناء: تشجيع + تذكير بأنها رمزية والأجر عند الله.
+  void _buyDialog(Item x) {
+    showDialog(
+      context: context,
+      builder: (d) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.3, end: 1),
+              duration: const Duration(milliseconds: 600),
+              curve: Curves.elasticOut,
+              builder: (c, v, _) => Transform.scale(
+                scale: v,
+                child: Text(x.emoji, style: const TextStyle(fontSize: 72)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'تم الحصول عليها 🎉',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: kGold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'أضيفت «${x.name}» إلى جنتك!\nكل صفحة قرأتها قرّبتك منها… فما أعظم أن يكون لك في الجنة الحقيقية أضعافها',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, height: 1.9),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'هذه جنة رمزية للتحفيز فقط،\nوالأجر الحقيقي على قدر نيتك عند الله 🤍',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.8),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('الحمد لله'),
           ),
         ],
       ),
@@ -2552,6 +2805,21 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
         ),
 
+        const SectionTitle('تقرير الشهر', icon: Icons.fact_check_outlined),
+        Panel(
+          padding: EdgeInsets.zero,
+          child: ListTile(
+            leading: const Icon(Icons.calendar_month, color: kGold),
+            title: const Text('تقرير ختمة الشهر', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('أيامك الثلاثون: المكتمل والفائت والقادم', style: TextStyle(fontSize: 11)),
+            trailing: const Icon(Icons.chevron_left, color: Colors.grey),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ReportPage()),
+            ),
+          ),
+        ),
+
         const SectionTitle('عن التطبيق', icon: Icons.info_outline),
         Panel(
           child: Column(
@@ -2614,5 +2882,184 @@ class _SettingsTabState extends State<SettingsTab> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(err ?? 'تم تحديد الموقع: ${store.city}'),
     ));
+  }
+}
+
+// ============================================================================
+//  تقرير الشهر: متابعة أيام الختمة الثلاثين
+// ============================================================================
+
+class ReportPage extends StatelessWidget {
+  const ReportPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        final n = DateTime.now();
+        final y = n.year, m = n.month, todayD = n.day;
+        final md = DateTime(y, m + 1, 0).day;
+        final D = md < 30 ? md : 30;
+
+        // 0 = قبل تثبيت التطبيق، 1 = مكتمل، 2 = فائت، 3 = اليوم الحالي، 4 = قادم
+        var done = 0, missed = 0;
+        final states = List<int>.filled(D + 1, 0);
+        for (var d = 1; d <= D; d++) {
+          final epoch = DateTime.utc(y, m, d).difference(DateTime.utc(1970)).inDays;
+          if (epoch < store.firstDay) {
+            states[d] = 0;
+          } else if (store.khatmaDayDone(y, m, d)) {
+            states[d] = 1;
+            done++;
+          } else if (d < todayD) {
+            states[d] = 2;
+            missed++;
+          } else if (d == todayD) {
+            states[d] = 3;
+          } else {
+            states[d] = 4;
+          }
+        }
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('تقرير الشهر')),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+            children: [
+              Panel(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _summaryChip(
+                        icon: '✅',
+                        value: done,
+                        label: 'يوم مكتمل',
+                        color: const Color(0xFF2E7D32),
+                        dark: dark,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _summaryChip(
+                        icon: '❌',
+                        value: missed,
+                        label: 'يوم فائت',
+                        color: const Color(0xFFC62828),
+                        dark: dark,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SectionTitle('أيام الشهر', icon: Icons.grid_on),
+              Panel(
+                child: GridView.count(
+                  crossAxisCount: 5,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  children: [
+                    for (var d = 1; d <= D; d++) _dayCell(d, states[d], dark),
+                  ],
+                ),
+              ),
+              const Panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('دليل الألوان', style: TextStyle(fontWeight: FontWeight.bold)),
+                    SizedBox(height: 8),
+                    Text('🟢 أخضر + ✓ : يوم أتممت فيه ختمتك كاملة',
+                        style: TextStyle(fontSize: 13, height: 1.8)),
+                    Text('🔴 أحمر : يوم فاتك دون إتمام الختمة',
+                        style: TextStyle(fontSize: 13, height: 1.8)),
+                    Text('⚪ أبيض : قبل تثبيتك التطبيق أو يوم قادم',
+                        style: TextStyle(fontSize: 13, height: 1.8)),
+                    Text('🟡 ذهبي : يومك الحالي',
+                        style: TextStyle(fontSize: 13, height: 1.8)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _summaryChip({
+    required String icon,
+    required int value,
+    required String label,
+    required Color color,
+    required bool dark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        color: color.withOpacity(dark ? 0.22 : 0.10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Column(
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 22)),
+          const SizedBox(height: 4),
+          Text(ar('$value'),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _dayCell(int d, int state, bool dark) {
+    Color bg, fg, border;
+    String mark;
+    switch (state) {
+      case 1:
+        bg = const Color(0xFF2E7D32);
+        fg = Colors.white;
+        border = const Color(0xFF2E7D32);
+        mark = '✓';
+        break;
+      case 2:
+        bg = const Color(0xFFC62828);
+        fg = Colors.white;
+        border = const Color(0xFFC62828);
+        mark = '✗';
+        break;
+      case 3:
+        bg = kGold.withOpacity(0.16);
+        fg = dark ? kGoldLight : kGreen;
+        border = kGold;
+        mark = '•';
+        break;
+      default:
+        bg = dark ? kNightSurface : Colors.white;
+        fg = dark ? Colors.white54 : Colors.black45;
+        border = dark ? const Color(0xFF233A30) : const Color(0xFFE7DDC4);
+        mark = state == 0 ? '—' : '';
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border, width: state == 3 ? 1.8 : 1),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(ar('$d'),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: fg)),
+          if (mark.isNotEmpty)
+            Text(mark,
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: fg)),
+        ],
+      ),
+    );
   }
 }
