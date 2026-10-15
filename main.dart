@@ -911,7 +911,7 @@ class NotificationService {
     const settings = InitializationSettings(android: androidInit, iOS: iosInit);
 
     try {
-      await _plugin.initialize(settings);
+      await _plugin.initialize(settings: settings);
       _ready = true;
     } catch (_) {
       _ready = false;
@@ -946,7 +946,11 @@ class NotificationService {
     } catch (_) {}
   }
 
-  NotificationDetails _details({String channelId = _channelId, String channelName = _channelName, bool sound = true}) {
+  NotificationDetails _details({
+    required String body,
+    String channelId = _channelId,
+    String channelName = _channelName,
+  }) {
     return NotificationDetails(
       android: AndroidNotificationDetails(
         channelId,
@@ -955,7 +959,7 @@ class NotificationService {
         importance: Importance.high,
         priority: Priority.high,
         enableVibration: store.vibrate,
-        styleInformation: const BigTextStyleInformation(''),
+        styleInformation: BigTextStyleInformation(body),
       ),
       iOS: const DarwinNotificationDetails(),
     );
@@ -976,11 +980,15 @@ class NotificationService {
     final tzWhen = tz.TZDateTime.from(when, tz.local);
     try {
       await _plugin.zonedSchedule(
-        id,
-        title,
-        body,
-        tzWhen,
-        _details(channelId: channelId, channelName: channelName),
+        id: id,
+        title: title,
+        body: body,
+        scheduledDate: tzWhen,
+        notificationDetails: _details(
+          body: body,
+          channelId: channelId,
+          channelName: channelName,
+        ),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         matchDateTimeComponents: repeatDaily ? DateTimeComponents.time : null,
       );
@@ -988,11 +996,15 @@ class NotificationService {
       // في حال رفض إذن المنبّه الدقيق نعود إلى الجدولة غير الدقيقة
       try {
         await _plugin.zonedSchedule(
-          id,
-          title,
-          body,
-          tzWhen,
-          _details(channelId: channelId, channelName: channelName),
+          id: id,
+          title: title,
+          body: body,
+          scheduledDate: tzWhen,
+          notificationDetails: _details(
+            body: body,
+            channelId: channelId,
+            channelName: channelName,
+          ),
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           matchDateTimeComponents: repeatDaily ? DateTimeComponents.time : null,
         );
@@ -1056,10 +1068,14 @@ class NotificationService {
     if (!_ready) return;
     try {
       await _plugin.show(
-        _dailyId + 1,
-        title,
-        body,
-        _details(channelId: _quranChannelId, channelName: _quranChannelName),
+        id: _dailyId + 1,
+        title: title,
+        body: body,
+        notificationDetails: _details(
+          body: body,
+          channelId: _quranChannelId,
+          channelName: _quranChannelName,
+        ),
       );
     } catch (_) {}
   }
